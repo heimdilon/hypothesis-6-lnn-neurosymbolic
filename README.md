@@ -27,6 +27,23 @@ Bu makalelerden çıkarılan seçili araştırma boşluğu:
 
 > LNN tabanlı sürekli öğrenen bir navigasyon politikası, sabit ağırlıklı DRL politikasına göre dağıtım sonrası ortam değişikliklerine daha hızlı adaptasyon gösterebilir; ancak vanishing gradient ve parametre hassasiyeti nedeniyle kararlılık riski taşır ve bu risk güvenlik süpervizörüyle sınırlandırılmalıdır.
 
+## Kısaltmalar ve Kavramlar
+
+| Terim | Açılım | Bu projedeki anlamı |
+| --- | --- | --- |
+| LNN | Liquid Neural Network | Zamanla değişen dinamiklere sahip, sürekli öğrenme/adaptasyon potansiyeli olan sinir ağı ailesi |
+| NCP | Neural Circuit Policy | MIT `ncps` kütüphanesindeki, seyrek bağlantılı ve biyolojik devrelerden esinlenen kontrol politikası |
+| CfC | Closed-form Continuous-time | Sürekli zaman fikrini kapalı form yaklaşımla verimli şekilde kullanan NCP katmanı |
+| LTC | Liquid Time-Constant | Zaman sabitleri öğrenilebilir olan, liquid neural network ailesine ait sürekli zamanlı katman |
+| RL | Reinforcement Learning | Robotun ödül/ceza sinyaliyle davranışını iyileştirmesi |
+| DRL | Deep Reinforcement Learning | Pekiştirmeli öğrenmenin derin sinir ağlarıyla yapılan hali |
+| Imitation learning | Gösterimden öğrenme | Uzman/planner davranışını örnek alarak ilk politika eğitimi |
+| Pure NCP | Saf NCP | Kararın tamamen NCP modeline bırakıldığı deney |
+| Residual NCP | Artık/düzeltici NCP | Sabit güvenli politikanın üstüne NCP'nin düzeltme sinyali eklediği deney |
+| Baseline | Referans yöntem | Karşılaştırma için kullanılan sabit, elle yazılmış navigasyon politikası |
+| Safety supervisor | Güvenlik süpervizörü | Riskli aksiyonları sınırlayan veya maskeleyen güvenlik katmanı |
+| Ablation | Bileşen karşılaştırma deneyi | Sistemdeki parçaların etkisini görmek için pure/residual, CfC/LTC ve imitation/RL varyantlarını ayrı ayrı test etme |
+
 ## Ne Yapıldı?
 
 ```mermaid

@@ -42,6 +42,37 @@ Bu boşlukta temel problem, öğrenen sinir ağı politikasının dinamik ortaml
 
 Bu proje H6'yı tam ölçekli bir robotik sistem olarak kanıtlamaz. Ama hipotezi sınamak için küçük ölçekli bir deney zemini kurar: farklı haritalar, sabit politika, saf NCP, residual NCP, CfC-LTC karşılaştırması ve görsel simülasyon çıktıları.
 
+## Kısaltmalar ve Temel Kavramlar
+
+| Terim | Açılım | Açıklama |
+| --- | --- | --- |
+| LNN | Liquid Neural Network | Girdiye ve zamana bağlı dinamikleri olan sinir ağı ailesidir. Bu çalışmada LNN fikri, değişen haritalara uyum sağlayabilecek öğrenen kontrolcü adayı olarak ele alındı. |
+| NCP | Neural Circuit Policy | MIT'nin `ncps` kütüphanesinde yer alan, biyolojik sinir devrelerinden esinlenen seyrek bağlantılı politika mimarisidir. Robotun hangi yöne hareket edeceğine karar veren öğrenen kontrolcü olarak kullanıldı. |
+| CfC | Closed-form Continuous-time | Sürekli zamanlı nöral dinamikleri kapalı form yaklaşımla hesaplayan NCP katmanıdır. Bu çalışmada LTC'ye göre daha kararlı sonuç verdi. |
+| LTC | Liquid Time-Constant | Öğrenilebilir zaman sabitleri kullanan liquid neural network katmanıdır. Dinamik sistem gibi davranması beklenir, fakat parametre hassasiyeti daha belirgin olabilir. |
+| RL | Reinforcement Learning | Pekiştirmeli öğrenmedir. Robot doğru ilerleme ve hedefe ulaşma için ödül, çarpışma ve riskli davranış için ceza alır. |
+| DRL | Deep Reinforcement Learning | Pekiştirmeli öğrenmenin derin sinir ağlarıyla yapılan halidir. Hipotezde sabit ağırlıklı DRL politikası, dağıtım sonrası adaptasyonu sınırlı bir referans fikir olarak kullanıldı. |
+| Imitation learning | Gösterimden öğrenme | Modelin önce uzman/planner davranışını taklit ederek başlangıç politikası öğrenmesidir. Bu, RL öncesi daha kontrollü bir başlangıç sağlar. |
+| Fine-tune | İnce ayar | Önceden eğitilmiş politikanın kısa ek eğitimle belirli göreve uyarlanmasıdır. Bu projede imitation sonrası kısa RL fine-tune kullanıldı. |
+| Baseline | Referans politika | Karşılaştırma için kullanılan sabit, geometrik ve elle yazılmış navigasyon politikasıdır. |
+| Pure NCP | Saf NCP | Robotun kararını tamamen NCP çıktısına bırakan deney varyantıdır. Güvenlik açısından en riskli ama model kapasitesini en doğrudan gösteren testtir. |
+| Residual NCP | Artık/düzeltici NCP | Sabit politikanın karar skorlarına NCP'nin küçük bir düzeltme sinyali eklediği varyanttır. Gerçek robotik için daha güvenli ve daha savunulabilir bir kurulumdur. |
+| Safety supervisor | Güvenlik süpervizörü | Öğrenen politikanın riskli aksiyonlarını sınırlayan güvenlik katmanıdır. Bu prototipte kısa ufuklu çarpışma ve açıklık kontrolleriyle temsil edildi. |
+| OOD | Out-of-distribution | Eğitimde görülmeyen veya alışılmıştan farklı harita/engel koşullarıdır. Zorlu haritalar bu fikri basitçe test etmek için kullanıldı. |
+| Sim-to-real | Simülasyondan gerçeğe geçiş | Simülasyonda çalışan yöntemin gerçek robota aktarılması problemidir. Bu proje henüz simülasyon düzeyindedir. |
+
+## Ablation Nedir?
+
+Ablation, bir modelin veya sistemin hangi parçasının sonuca ne kadar katkı verdiğini anlamak için yapılan kontrollü çıkarma/değiştirme deneyidir. Yani sistem tek bir bütün olarak değil, farklı bileşenleri değiştirilerek incelenir.
+
+Bu projede ablation üç soruya cevap vermek için kullanıldı:
+
+- **Pure vs residual:** NCP tek başına mı daha iyi çalışıyor, yoksa sabit güvenli politika üzerine düzeltici olarak mı daha kararlı?
+- **CfC vs LTC:** MIT `ncps` içindeki iki liquid/NCP katmanı aynı görevde farklı davranıyor mu?
+- **Imitation vs RL fine-tune:** Uzman davranışını taklit etmek yeterli mi, yoksa kısa pekiştirmeli öğrenme sonrası performans değişiyor mu?
+
+Bu yüzden ablation burada yalnızca teknik bir tablo değildir; doğrudan Hipotez 6'nın güvenlik kısmını test eden deney tasarımıdır. Saf NCP'nin başarısız olması ve residual NCP'nin daha iyi davranması, öğrenen politikanın güvenlik süpervizörüyle sınırlandırılması gerektiği fikrini güçlendirmiştir.
+
 ## Çalışma Akışı
 
 ```mermaid
