@@ -4,7 +4,7 @@ import argparse
 import csv
 import heapq
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable
 
@@ -68,6 +68,8 @@ class EpisodeResult:
     overrides: int
     adaptation_lag: int
     mean_progress: float
+    action_disagreements: int = 0
+    beneficial_disagreements: int = 0
 
 
 def wrap_angle(angle: float) -> float:
@@ -804,25 +806,68 @@ def run_episode(
     )
 
 
+def _wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval for binomial proportion -- works well for small n."""
+    if n == 0:
+        return 0.0, 1.0
+    p_hat = successes / n
+    denom = 1 + z ** 2 / n
+    center = (p_hat + z ** 2 / (2 * n)) / denom
+    margin = z * math.sqrt((p_hat * (1 - p_hat) + z ** 2 / (4 * n)) / n) / denom
+    return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def _metric_stats(values: list[float]) -> tuple[float, float, float, float, float]:
+    """Return (mean, std, se, ci_lower, ci_upper) for a list of values."""
+    n = len(values)
+    m = float(np.mean(values))
+    if n <= 1:
+        return m, 0.0, 0.0, m, m
+    s = float(np.std(values, ddof=1))
+    se = s / math.sqrt(n)
+    return m, s, se, m - 1.96 * se, m + 1.96 * se
+
+
 def aggregate(results: list[EpisodeResult]) -> list[dict[str, float | str]]:
     rows = []
     keys = sorted({(r.controller, r.scenario) for r in results})
     for controller, scenario in keys:
         group = [r for r in results if r.controller == controller and r.scenario == scenario]
+        n = len(group)
+        successes = sum(r.success for r in group)
+        sr_lo, sr_hi = _wilson_ci(successes, n)
+
+        steps_m, steps_s, steps_se, _, _ = _metric_stats([r.steps for r in group])
+        pl_m, pl_s, pl_se, _, _ = _metric_stats([r.path_length for r in group])
+        mc_m, mc_s, mc_se, _, _ = _metric_stats([r.min_clearance for r in group])
+        nm_m, _, _, _, _ = _metric_stats([float(r.near_misses) for r in group])
+        ov_m, _, _, _, _ = _metric_stats([float(r.overrides) for r in group])
+        al_m, _, _, _, _ = _metric_stats([float(r.adaptation_lag) for r in group])
+        pr_m, pr_s, pr_se, _, _ = _metric_stats([r.mean_progress for r in group])
+
         rows.append(
             {
                 "controller": controller,
                 "scenario": scenario,
-                "n": len(group),
-                "success_rate": np.mean([r.success for r in group]),
+                "n": n,
+                "success_rate": successes / max(n, 1),
+                "success_ci_lower": sr_lo,
+                "success_ci_upper": sr_hi,
                 "collision_rate": np.mean([r.collision for r in group]),
-                "mean_steps": np.mean([r.steps for r in group]),
-                "mean_path_length": np.mean([r.path_length for r in group]),
-                "mean_min_clearance": np.mean([r.min_clearance for r in group]),
-                "mean_near_misses": np.mean([r.near_misses for r in group]),
-                "mean_overrides": np.mean([r.overrides for r in group]),
-                "mean_adaptation_lag": np.mean([r.adaptation_lag for r in group]),
-                "mean_progress": np.mean([r.mean_progress for r in group]),
+                "mean_steps": steps_m,
+                "std_steps": steps_s,
+                "se_steps": steps_se,
+                "mean_path_length": pl_m,
+                "mean_min_clearance": mc_m,
+                "std_min_clearance": mc_s,
+                "se_min_clearance": mc_se,
+                "mean_near_misses": nm_m,
+                "mean_overrides": ov_m,
+                "mean_adaptation_lag": al_m,
+                "mean_progress": pr_m,
+                "std_progress": pr_s,
+                "mean_action_disagreements": float(np.mean([r.action_disagreements for r in group])),
+                "mean_beneficial_disagreements": float(np.mean([r.beneficial_disagreements for r in group])),
             }
         )
     return rows
