@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local server logs
+*.log
+custom_map_server.*.log
+
+# LaTeX build intermediates
+*.aux
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Local/generated UI runs. The app recreates this folder when simulations run.
+hypothesis_6_lnn_neurosymbolic/figures/custom_maps/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

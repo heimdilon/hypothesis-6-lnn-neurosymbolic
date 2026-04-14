@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>H6 Harita Laboratuvarı</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">H6 simülasyon editörü</p>
+        <h1>Harita Laboratuvarı</h1>
+      </div>
+      <div class="top-actions">
+        <span id="saveState">Hazır</span>
+        <button id="runTop" class="primary">Simülasyonu çalıştır</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel left-panel">
+        <section>
+          <label for="mapName">Harita adı</label>
+          <input id="mapName" type="text" value="benim_labirentim" maxlength="80" />
+          <p class="hint">Çıktılar bu ada göre ayrı dosya olarak kaydedilir.</p>
+        </section>
+
+        <section>
+          <p class="label">Kayıtlı haritalar</p>
+          <select id="savedMapSelect">
+            <option value="">Kayıt yok</option>
+          </select>
+          <div class="button-row split">
+            <button id="saveMap">Kaydet</button>
+            <button id="loadSavedMap">Yükle</button>
+            <button id="deleteSavedMap" class="danger">Sil</button>
+          </div>
+          <p id="mapLibraryStatus" class="hint">Haritalar proje klasörüne kaydedilir.</p>
+        </section>
+
+        <section>
+          <label for="mapTemplate">Hazır harita</label>
+          <select id="mapTemplate">
+            <option value="blank">Boş harita</option>
+            <option value="labyrinth">Labirent</option>
+            <option value="zigzag">Zigzag koridor</option>
+            <option value="dense">Yoğun labirent</option>
+            <option value="utrap">U tuzağı</option>
+            <option value="sensor">Sensör gölgesi</option>
+          </select>
+          <button id="applyMapTemplate">Haritayı yükle</button>
+        </section>
+
+        <section>
+          <p class="label">Düzenleme modu</p>
+          <div class="segmented">
+            <button class="mode active" data-mode="add">Ekle</button>
+            <button class="mode" data-mode="select">Taşı</button>
+            <button class="mode" data-mode="erase">Sil</button>
+            <button class="mode" data-mode="start">Başlat</button>
+            <button class="mode" data-mode="goal">Hedef</button>
+          </div>
+          <p class="hint">Başlat/Hedef modunda canvas'a tıkla veya sürükle. Sağ tık engeli siler.</p>
+        </section>
+
+        <section>
+          <p class="label">Başlangıç ve hedef</p>
+          <div class="coord-grid">
+            <label>Başlat x<input id="startX" type="number" min="0.25" max="9.75" step="0.05" value="1.00" /></label>
+            <label>Başlat y<input id="startY" type="number" min="0.25" max="9.75" step="0.05" value="1.00" /></label>
+            <label>Hedef x<input id="goalX" type="number" min="0.25" max="9.75" step="0.05" value="8.80" /></label>
+            <label>Hedef y<input id="goalY" type="number" min="0.25" max="9.75" step="0.05" value="8.70" /></label>
+          </div>
+        </section>
+
+        <section>
+          <div class="range-head">
+            <label for="brushRadius">Engel yarıçapı</label>
+            <output id="brushRadiusValue">0.30</output>
+          </div>
+          <input id="brushRadius" type="range" min="0.08" max="1.10" step="0.01" value="0.30" />
+          <button id="deleteSelected">Seçili engeli sil</button>
+          <button id="clearMap" class="danger">Haritayı temizle</button>
+        </section>
+
+        <section>
+          <p class="label">Harita dosyası</p>
+          <div class="button-row">
+            <button id="exportMap">JSON indir</button>
+            <label class="file-button" for="importMap">JSON yükle</label>
+            <input id="importMap" type="file" accept="application/json" />
+          </div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <div class="workspace-head">
+          <div>
+            <p class="eyebrow">10 x 10 dünya</p>
+            <h2 id="canvasTitle">Engelleri yerleştir</h2>
+          </div>
+          <div class="stats">
+            <span><b id="obstacleCount">0</b> engel</span>
+            <span id="pointerReadout">x: -, y: -</span>
+          </div>
+        </div>
+        <canvas id="mapCanvas" width="760" height="760"></canvas>
+      </section>
+
+      <aside class="panel right-panel">
+        <section>
+          <label for="paramPreset">Parametre setup</label>
+          <select id="paramPreset">
+            <option value="balanced">Dengeli</option>
+            <option value="mazeSolver">Labirent çözücü</option>
+            <option value="highNoise">Gürültülü sensör</option>
+            <option value="safetyFirst">Güvenlik öncelikli</option>
+            <option value="aggressive">Agresif hızlı</option>
+          </select>
+        </section>
+
+        <section>
+          <label for="liquidCell">Liquid hücre tipi</label>
+          <select id="liquidCell">
+            <option value="cfc">MIT ncps CfC</option>
+            <option value="ltc">MIT ncps LTC</option>
+            <option value="legacy">Eski prototip hücre</option>
+          </select>
+          <p class="hint">CfC ve LTC seçenekleri resmi `ncps.torch` katmanlarını kullanır.</p>
+        </section>
+
+        <section class="controls" id="controls"></section>
+
+        <section>
+          <p class="label">Denetleyiciler</p>
+          <label class="check"><input type="checkbox" id="ctrlFixed" checked /> fixed policy</label>
+          <label class="check"><input type="checkbox" id="ctrlLiquid" checked /> liquid online</label>
+          <label class="check"><input type="checkbox" id="ctrlSupervisor" checked /> liquid + symbolic supervisor</label>
+          <label class="check"><input type="checkbox" id="makeGif" checked /> GIF oluştur</label>
+        </section>
+
+        <section>
+          <button id="runSimulation" class="primary wide">Simülasyonu çalıştır</button>
+          <p id="runStatus" class="hint">Çalıştırınca PNG, GIF ve config JSON üretilir.</p>
+          <div id="progressWrap" class="progress-wrap" hidden>
+            <div class="progress-meta">
+              <span id="progressMessage">Hazırlanıyor</span>
+              <span id="progressText">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="progressBar" class="progress-bar"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="results">
+          <p class="label">Sonuçlar</p>
+          <div id="traceTable" class="trace-table"></div>
+          <div id="outputLinks" class="output-links"></div>
+          <img id="previewImage" alt="Simülasyon önizleme" />
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

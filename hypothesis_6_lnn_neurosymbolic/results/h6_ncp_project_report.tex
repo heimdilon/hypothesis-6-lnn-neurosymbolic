@@ -1,0 +1,227 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[turkish]{babel}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{siunitx}
+\usepackage{caption}
+
+\geometry{margin=2.4cm}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!55!black,
+    urlcolor=blue!55!black,
+    citecolor=blue!55!black
+}
+\sisetup{
+    round-mode=places,
+    round-precision=3,
+    detect-weight=true,
+    detect-family=true
+}
+
+\title{\textbf{Hipotez 6 İçin NCP Tabanlı Nöro-Sembolik Navigasyon Deneyi: \\
+Saf CfC/LTC, Residual Politika ve Güvenlik Odaklı Ablation Çalışması}}
+\author{Proje çalışma notu}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Bu rapor, mobil robot navigasyonu bağlamında Hipotez 6'nın deneysel olarak incelenmesi için geliştirilen simülasyon, arayüz, resmi Neural Circuit Policies (NCP) entegrasyonu ve ablation deneylerini bilimsel bir dille özetlemektedir. Çalışmanın çıkış noktası, dağıtım sonrası ortam değişimlerinde sıvı zaman sabitli sinir ağlarının ve nöro-sembolik güvenlik denetiminin sabit politikalara kıyasla daha uyarlanabilir fakat potansiyel olarak daha kararsız bir davranış gösterebileceği varsayımıdır. Bu amaçla iki boyutlu engelli haritalar, sensör gürültüsü, dropout, rota planlama, çevrimiçi öğrenme, özel harita editörü, GIF/PNG çıktı üretimi ve resmi \texttt{ncps.torch} kütüphanesindeki CfC ve LTC katmanları kullanılarak tekrarlanabilir bir deney hattı oluşturulmuştur. Son ablation deneylerinde saf NCP politikalarının kısa imitation/RL eğitimi altında güvenli navigasyonu tek başına sürdüremediği, buna karşılık sabit politika üzerine eklenen residual NCP düzeltmesinin başarı ve çarpışma oranlarını anlamlı biçimde iyileştirdiği gözlenmiştir. Hard harita grubunda CfC tabanlı RL fine-tune residual model başarı oranını \num{0.60}'a çıkarırken çarpışma oranını \num{0.40}'a düşürmüş, aynı koşulda sabit politika \num{0.50} başarı ve \num{0.50} çarpışma oranı vermiştir. Bulgular, bu aşamada saf NCP otonomisinden çok güvenli residual nöro-sembolik mimarinin daha savunulabilir olduğunu göstermektedir.
+\end{abstract}
+
+\section{Giriş}
+
+Mobil robot navigasyonu, dağıtım sonrası ortam değişimi, algılayıcı gürültüsü ve beklenmeyen engel yerleşimleri nedeniyle yalnızca eğitim ortamında başarılı olan sabit politikalardan daha fazlasını gerektirir. Bu çalışmada ele alınan Hipotez 6, Liquid Neural Network (LNN) ailesindeki sürekli-zaman dinamiklerinin, özellikle Neural Circuit Policies (NCP), Liquid Time-Constant (LTC) ve Closed-form Continuous-time (CfC) modellerinin, değişen harita koşullarında adaptasyon avantajı sağlayabileceği fikrine dayanır. Bununla birlikte aynı hipotez, çevrimiçi adaptasyonun güvenlik sınırlarını ihlal edebileceğini ve bu nedenle sembolik ya da planlayıcı tabanlı bir güvenlik katmanıyla sınırlandırılması gerektiğini de öne sürer.
+
+Projenin ilk aşamasında literatürden çıkarılan boşluklar doğrultusunda H6 hipotezi seçilmiş, ardından bu hipotezi küçük fakat kontrollü bir deney ortamında sınamak üzere iki boyutlu mobil robot simülasyonu kurulmuştur. Başlangıçta elle yazılmış LNN-benzeri bir prototip hücre kullanılmış, daha sonra bu yaklaşım resmi MIT NCP kütüphanesindeki \texttt{ncps.torch.CfC} ve \texttt{ncps.torch.LTC} katmanlarıyla değiştirilmiştir. Bu geçiş, deneyin yalnızca kavramsal bir LNN benzetimi olmaktan çıkıp gerçek NCP katmanlarını kullanan bir araştırma prototipine dönüşmesini sağlamıştır.
+
+\section{Yazılım ve Deney Altyapısı}
+
+Çalışma klasörü \texttt{hypothesis\_6\_lnn\_neurosymbolic} altında düzenlenmiştir. Çekirdek simülasyon dosyası \texttt{src/run\_lnn\_experiment.py}, harita geometrisini, lidar-benzeri ışın sensörünü, gürültü modelini, sabit uzman politikayı, NCP tabanlı liquid politikayı ve sembolik güvenlik denetleyicisini içermektedir. Etkileşimli harita arayüzü \texttt{src/custom\_map\_server.py}, \texttt{ui/index.html}, \texttt{ui/app.js} ve \texttt{ui/styles.css} bileşenleriyle oluşturulmuştur. Bu arayüzde kullanıcı engel yerleştirebilmekte, başlangıç ve hedef noktalarını değiştirebilmekte, simülasyon süresini ayarlayabilmekte, haritaları kaydedip yükleyebilmekte ve simülasyon sırasında ilerleme çubuğunu izleyebilmektedir.
+
+Arayüzde ayrıca liquid hücre tipi seçimi eklenmiştir. Kullanıcı \texttt{MIT ncps CfC}, \texttt{MIT ncps LTC} veya eski prototip hücre arasında seçim yapabilmektedir. NCP nöron sayısı, bağlantı seyrekliği, fixed baseline etkisi, residual etki katsayısı ve çevrimiçi öğrenme hızı slider'lar üzerinden değiştirilebilmektedir. Bu tasarım, aynı haritada saf NCP, residual NCP ve güvenlik denetimli NCP davranışının karşılaştırılmasına olanak vermektedir.
+
+\section{Yöntem}
+
+Simülasyon dünyası \(10 \times 10\) boyutunda iki boyutlu bir alandır. Robot, dairesel engeller ve duvar sınırları içinde hareket eder. Her adımda robotun konumu, yönelimi, hedefe göre açısal hatası, hedef uzaklığı, minimum sensör mesafesi ve belirsizlik katsayısı kullanılarak gözlem vektörü oluşturulur. Sensör modeli \num{12} ışınlı lidar-benzeri menzil ölçümü, Gauss gürültüsü, dropout ve ölçek bias parametrelerinden oluşur. Aksiyon uzayı yedi ayrık dönüş komutundan meydana gelir: \(-70^\circ\), \(-40^\circ\), \(-18^\circ\), \(0^\circ\), \(18^\circ\), \(40^\circ\) ve \(70^\circ\).
+
+Sabit politika, eğitim-benzeri harita üzerinde uzman skorlara ridge regresyon uygulanarak elde edilmiştir. Bu sabit politika başlangıç denetleyicisi ve residual mimari için baseline olarak kullanılmıştır. NCP tabanlı politika iki farklı modda değerlendirilmiştir. Saf modda karar tamamen NCP logits değerleriyle verilir. Residual modda ise skor fonksiyonu
+\[
+s(a \mid x) = \lambda_b s_{\mathrm{fixed}}(a \mid x) + \lambda_n s_{\mathrm{NCP}}(a \mid x)
+\]
+şeklinde tanımlanmıştır. Burada \(\lambda_b\) sabit politika etkisini, \(\lambda_n\) ise NCP residual etkisini belirler. Son deneylerde \(\lambda_b=1.0\) ve \(\lambda_n=0.35\) kullanılmıştır. Bu formülasyon, saf NCP kapasitesini residual güvenlik varsayımından ayrı olarak sınamayı mümkün kılmıştır.
+
+Sembolik güvenlik katmanı, A* benzeri grid rota planlayıcısı ve kısa ufuklu çarpışma/clearance kontrolünden oluşmaktadır. Planlayıcı hedefe giden global rotayı üretir; güvenlik katmanı ise NCP tarafından önerilen aksiyonu olası çarpışma, güvenlik marjı ve rota uyumu bakımından yeniden değerlendirir. Eğer önerilen aksiyon güvenlik eşiğini ihlal ediyorsa, daha güvenli bir aksiyonla değiştirilir. Bu yaklaşım, nöro-sembolik mimarinin temel iddiasını temsil eder: öğrenilmiş politika adaptasyon sağlar, sembolik denetim ise güvenlik sınırlarını korur.
+
+\section{Eğitim ve Ablation Tasarımı}
+
+Son aşamada \texttt{src/train\_ncp\_ablation.py} betiği eklenmiştir. Bu betik resmi \texttt{ncps.torch} katmanlarını kullanarak CfC ve LTC modellerini iki aşamalı biçimde eğitir. İlk aşama offline imitation learning aşamasıdır. Uzman etiketleri, rota-güdümlü expert skorlarından türetilir. Eğitim verisi \texttt{train\_like}, \texttt{shifted\_clutter}, \texttt{narrow\_gate} ve \texttt{u\_trap} senaryolarından oluşturulmuştur. Son koşuda \num{48} eğitim dizisi, \num{12} doğrulama dizisi, \num{24} adımlık sequence uzunluğu ve \num{5} imitation epoch kullanılmıştır. Expert etiketlerinde düz gitme aksiyonu baskın olduğundan, imitation kaybı sınıf ağırlıklı cross-entropy ile hesaplanmıştır.
+
+İkinci aşama kısa policy-gradient fine-tune aşamasıdır. Bu aşama, imitation ile eğitilen checkpoint üzerinden az sayıda çevrimiçi episode çalıştırır ve ödül sinyali olarak hedefe ilerleme, clearance, dönüş maliyeti, çarpışma cezası ve hedefe varış ödülünü kullanır. Bu aşamanın amacı tam ölçekli RL eğitimi yapmak değil, imitation sonrasında NCP dinamiklerinin çevrimiçi reward sinyali altında davranışı nasıl değiştirdiğini gözlemlemektir. Son koşuda \num{6} RL episode ve \num{50} maksimum adım kullanılmıştır.
+
+Değerlendirme, default ve hard harita gruplarında yapılmıştır. Test seti \texttt{train\_like}, \texttt{shifted\_clutter}, \texttt{narrow\_gate}, \texttt{u\_trap}, \texttt{zigzag\_corridor}, \texttt{dense\_maze}, \texttt{deceptive\_u\_trap}, \texttt{sensor\_shadow} ve \texttt{labyrinth\_maze} senaryolarını kapsamaktadır. Her senaryo için iki seed kullanılmış ve başarı oranı, çarpışma oranı, ortalama adım sayısı, minimum clearance, yakın geçiş sayısı ve ortalama ilerleme ölçülmüştür.
+
+\section{Sonuçlar}
+
+Tablo~\ref{tab:training-summary}, imitation ve kısa RL fine-tune aşamalarının son kayıtlarını özetlemektedir. LTC imitation doğrulama doğruluğu \num{0.562} ile CfC imitation doğruluğundan daha yüksek görünmektedir. Buna karşın bu doğruluk farkı, navigasyon güvenliği ve başarı oranlarına doğrudan taşınmamıştır. Kısa RL fine-tune aşamasında her iki mimaride de son episode çarpışmayla bitmiştir; bu durum fine-tune aşamasının yüksek varyanslı ve henüz yetersiz uzunlukta olduğunu göstermektedir.
+
+\begin{table}[htbp]
+\centering
+\caption{Eğitim aşaması son kayıtları.}
+\label{tab:training-summary}
+\begin{tabular}{llrrrr}
+\toprule
+Hücre & Aşama & Kayıt & Kayıp & Val. doğruluk & Episode dönüşü \\
+\midrule
+CfC & Imitation & 5 & 1.7778 & 0.205 & -- \\
+CfC & RL fine-tune & 6 & -0.8532 & -- & 0.490 \\
+LTC & Imitation & 5 & 1.7810 & 0.562 & -- \\
+LTC & RL fine-tune & 6 & 0.1809 & -- & -9.360 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tablo~\ref{tab:residual-pure}, residual mimarinin saf NCP politikasına göre farkını göstermektedir. Saf CfC ve saf LTC, hem default hem hard haritalarda \num{0.0} başarı ve \num{1.0} çarpışma oranı üretmiştir. Residual yapı ise tüm koşullarda başarıyı artırmış ve çarpışma oranını düşürmüştür. En belirgin iyileşme CfC RL fine-tune residual modelinde gözlenmiştir: hard haritalarda başarı farkı \(+\num{0.600}\), çarpışma farkı \(-\num{0.600}\) ve minimum clearance farkı \(+\num{0.201}\) olmuştur.
+
+\begin{table}[htbp]
+\centering
+\caption{Residual ve pure NCP varyantları arasındaki farklar. Pozitif başarı farkı residual model lehinedir; negatif çarpışma farkı residual modelin daha az çarpıştığını gösterir.}
+\label{tab:residual-pure}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrrrrrr}
+\toprule
+Hücre & Aşama & Grup & Pure başarı & Residual başarı & \(\Delta\) başarı & Pure çarp. & Residual çarp. & \(\Delta\) çarp. & \(\Delta\) clearance \\
+\midrule
+CfC & Imitation & Default & 0.000 & 0.750 & 0.750 & 1.000 & 0.000 & -1.000 & 0.547 \\
+CfC & Imitation & Hard & 0.000 & 0.300 & 0.300 & 1.000 & 0.700 & -0.300 & 0.156 \\
+CfC & RL fine-tune & Default & 0.000 & 1.000 & 1.000 & 1.000 & 0.000 & -1.000 & 0.557 \\
+CfC & RL fine-tune & Hard & 0.000 & 0.600 & 0.600 & 1.000 & 0.400 & -0.600 & 0.201 \\
+LTC & Imitation & Default & 0.000 & 0.875 & 0.875 & 1.000 & 0.000 & -1.000 & 0.575 \\
+LTC & Imitation & Hard & 0.000 & 0.300 & 0.300 & 1.000 & 0.700 & -0.300 & 0.143 \\
+LTC & RL fine-tune & Default & 0.000 & 0.875 & 0.875 & 1.000 & 0.000 & -1.000 & 0.552 \\
+LTC & RL fine-tune & Hard & 0.000 & 0.300 & 0.300 & 1.000 & 0.700 & -0.300 & 0.137 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Tablo~\ref{tab:cfc-ltc}, CfC ve LTC mimarilerinin aynı eğitim ve değerlendirme hattındaki farklarını göstermektedir. Pure varyantlarda iki mimari de başarısızdır; bu nedenle anlamlı ayrım residual koşullarda ortaya çıkmaktadır. Default haritalarda imitation residual LTC, CfC'ye göre \num{0.125} daha yüksek başarı vermiştir. Buna karşılık RL fine-tune residual koşulunda CfC default grupta \num{1.000} başarıya ulaşmış, hard grupta ise LTC'ye göre \num{0.300} daha yüksek başarı ve \num{0.300} daha düşük çarpışma oranı üretmiştir.
+
+\begin{table}[htbp]
+\centering
+\caption{CfC ve LTC karşılaştırması. \(\Delta\) değerleri CfC eksi LTC olarak hesaplanmıştır.}
+\label{tab:cfc-ltc}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrrrrrr}
+\toprule
+Aşama & Varyant & Grup & CfC başarı & LTC başarı & \(\Delta\) başarı & CfC çarp. & LTC çarp. & \(\Delta\) çarp. & \(\Delta\) clearance \\
+\midrule
+Imitation & Pure & Default & 0.000 & 0.000 & 0.000 & 1.000 & 1.000 & 0.000 & -0.001 \\
+Imitation & Pure & Hard & 0.000 & 0.000 & 0.000 & 1.000 & 1.000 & 0.000 & -0.031 \\
+Imitation & Residual & Default & 0.750 & 0.875 & -0.125 & 0.000 & 0.000 & 0.000 & -0.029 \\
+Imitation & Residual & Hard & 0.300 & 0.300 & 0.000 & 0.700 & 0.700 & 0.000 & -0.018 \\
+RL fine-tune & Pure & Default & 0.000 & 0.000 & 0.000 & 1.000 & 1.000 & 0.000 & -0.025 \\
+RL fine-tune & Pure & Hard & 0.000 & 0.000 & 0.000 & 1.000 & 1.000 & 0.000 & -0.044 \\
+RL fine-tune & Residual & Default & 1.000 & 0.875 & 0.125 & 0.000 & 0.000 & 0.000 & -0.020 \\
+RL fine-tune & Residual & Hard & 0.600 & 0.300 & 0.300 & 0.400 & 0.700 & -0.300 & 0.020 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Hard harita ortalamaları Tablo~\ref{tab:hard-summary}'de verilmiştir. Sabit politika hard grupta \num{0.500} başarı ve \num{0.500} çarpışma oranı üretmiştir. CfC RL fine-tune residual model bu grupta \num{0.600} başarı ve \num{0.400} çarpışma oranıyla en iyi başarı-çarpışma dengesini vermiştir. Buna karşılık saf NCP varyantlarının tümü \num{1.000} çarpışma oranına sahiptir. Bu sonuç, mevcut veri ve eğitim rejimi altında saf NCP kararlarının güvenlik için yeterli olmadığını açık biçimde göstermektedir.
+
+\begin{table}[htbp]
+\centering
+\caption{Hard harita grubu ortalamaları.}
+\label{tab:hard-summary}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrr}
+\toprule
+Denetleyici & \(n\) & Başarı & Çarpışma & Ortalama adım & Ortalama min. clearance \\
+\midrule
+Fixed policy & 10 & 0.500 & 0.500 & 48.2 & 0.081 \\
+CfC imitation pure & 10 & 0.000 & 1.000 & 6.1 & -0.141 \\
+CfC imitation residual & 10 & 0.300 & 0.700 & 40.0 & 0.015 \\
+CfC RL fine-tune pure & 10 & 0.000 & 1.000 & 6.2 & -0.157 \\
+CfC RL fine-tune residual & 10 & 0.600 & 0.400 & 45.0 & 0.043 \\
+LTC imitation pure & 10 & 0.000 & 1.000 & 9.7 & -0.110 \\
+LTC imitation residual & 10 & 0.300 & 0.700 & 47.3 & 0.033 \\
+LTC RL fine-tune pure & 10 & 0.000 & 1.000 & 9.9 & -0.113 \\
+LTC RL fine-tune residual & 10 & 0.300 & 0.700 & 44.6 & 0.023 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\section{Tartışma}
+
+Elde edilen sonuçlar Hipotez 6'nın iki parçalı doğasını desteklemektedir. Birinci parça, sürekli-zaman NCP dinamiklerinin değişen haritalarda faydalı düzeltmeler üretebileceği yönündedir. Bu beklenti özellikle residual CfC modelinde görülmüştür; RL fine-tune sonrası hard haritalarda sabit politikadan daha yüksek başarı ve daha düşük çarpışma oranı elde edilmiştir. İkinci parça ise adaptif liquid politikanın güvenlik kısıtı olmadan kararsızlaşabileceği yönündedir. Saf NCP varyantlarının tüm gruplarda erken çarpışmaya gitmesi bu riskin güçlü bir göstergesidir.
+
+Bu bulgu, projede kullanılan nöro-sembolik tasarımın gerekçesini güçlendirmektedir. Saf öğrenilmiş politika, kısa imitation ve düşük episode sayılı RL fine-tune altında güvenli navigasyon davranışını tek başına taşıyamamaktadır. Buna karşılık residual politika, sabit uzman davranışı korurken NCP'nin düzeltici kapasitesini eklemekte ve özellikle hard haritalarda daha iyi bir başarı-çarpışma dengesi sağlamaktadır. Bu nedenle mevcut aşamada en savunulabilir mimari, saf NCP otonomisi değil, fixed-policy baseline, NCP residual adaptasyon ve sembolik güvenlik denetiminin birlikte kullanıldığı mimaridir.
+
+CfC ve LTC karşılaştırması da dikkat çekicidir. LTC imitation doğruluğu daha yüksek olmasına rağmen hard haritalardaki residual başarı CfC RL fine-tune modelinin gerisinde kalmıştır. Bu sonuç, sequence classification benzeri imitation doğruluğunun robotik kapalı çevrim performansını tek başına açıklamadığını göstermektedir. Kapalı çevrim navigasyonda küçük aksiyon hataları hızla dağılım kaymasına, engel yakınlaşmasına ve çarpışmaya dönüşebilmektedir. Bu nedenle değerlendirme yalnızca validation accuracy ile değil, başarı, çarpışma, clearance ve senaryo bazlı genelleme metrikleriyle yapılmalıdır.
+
+\section{Sınırlılıklar}
+
+Bu çalışma, fiziksel robot validasyonu değil, kontrollü bir iki boyutlu simülasyon prototipidir. Harita geometrileri dairesel engeller ve basitleştirilmiş duvar sınırlarıyla temsil edilmiştir. Sensör modeli lidar-benzeri ışın ölçümü, gürültü, dropout ve ölçek bias içerse de gerçek sensör dinamiklerini tam olarak modellememektedir. RL fine-tune aşaması yalnızca kısa episode sayısıyla yürütülmüştür; bu nedenle politika-gradient sonuçları yüksek varyanslıdır ve kesin performans iddiası olarak yorumlanmamalıdır. Ayrıca değerlendirmede her senaryo için iki seed kullanılmıştır; daha güçlü istatistiksel sonuçlar için seed sayısının artırılması, güven aralıklarının raporlanması ve hiperparametre duyarlılık analizinin yapılması gerekir.
+
+Bir diğer sınırlılık, saf NCP eğitiminde expert etiket dağılımının dengesiz olmasıdır. Sınıf ağırlıklı imitation kaybı bu sorunu azaltmak için eklenmiştir, ancak saf NCP varyantları hâlâ güvenli kapalı çevrim davranış üretmekte başarısız olmuştur. Bu sonuç saf NCP fikrinin tamamen geçersiz olduğunu değil, mevcut küçük veri ve kısa eğitim rejimi altında yetersiz kaldığını göstermektedir.
+
+\section{Yeniden Üretilebilirlik}
+
+Deneyler Windows ortamında \texttt{C:\textbackslash ProgramData\textbackslash miniconda3\textbackslash python.exe} kullanılarak çalıştırılmıştır. Gerekli paketler \texttt{requirements.txt} dosyasına eklenmiştir. Kurulum için aşağıdaki komut kullanılır:
+
+\begin{verbatim}
+C:\ProgramData\miniconda3\python.exe -m pip install -r requirements.txt
+\end{verbatim}
+
+Etkileşimli arayüz aşağıdaki komutla başlatılır:
+
+\begin{verbatim}
+C:\ProgramData\miniconda3\python.exe src\custom_map_server.py --port 8765
+\end{verbatim}
+
+Saf NCP imitation/RL ve ablation deneyleri aşağıdaki komutla yeniden üretilebilir:
+
+\begin{verbatim}
+C:\ProgramData\miniconda3\python.exe src\train_ncp_ablation.py
+  --train-sequences 48 --val-sequences 12 --seq-len 24
+  --imitation-epochs 5 --batch-size 12 --rl-episodes 6
+  --rl-max-steps 50 --eval-episodes 2 --eval-max-steps 120
+  --hidden-dim 24 --imitation-lr 0.003 --rl-lr 0.001
+  --residual-scale 0.35
+\end{verbatim}
+
+Başlıca çıktı dosyaları \texttt{results/ncp\_training\_log.csv}, \texttt{results/ncp\_ablation\_episode\_results.csv}, \texttt{results/ncp\_ablation\_group\_summary.csv}, \texttt{results/ncp\_residual\_vs\_pure\_summary.csv}, \texttt{results/ncp\_cfc\_vs\_ltc\_summary.csv}, \texttt{results/ncp\_ablation\_summary.md} ve \texttt{figures/ncp\_ablation\_success\_collision.png} dosyalarıdır. Eğitilen modeller \texttt{results/models/} altında \texttt{.pt} checkpoint dosyaları olarak saklanmıştır.
+
+\section{Sonuç}
+
+Bu projede Hipotez 6, kavramsal bir LNN önerisinden resmi NCP katmanlarını kullanan, etkileşimli harita editörüyle desteklenen ve ablation tabloları üreten tekrarlanabilir bir deney hattına dönüştürülmüştür. En önemli bulgu, saf CfC/LTC NCP politikalarının kısa imitation/RL rejiminde güvenli navigasyon için yeterli olmaması, buna karşılık fixed-policy baseline üzerine kurulan residual NCP yaklaşımının daha iyi başarı-çarpışma dengesi sağlamasıdır. Hard haritalarda CfC RL fine-tune residual modelin sabit politikayı aşması, NCP dinamiklerinin düzeltici residual rolünde faydalı olabileceğini göstermektedir. Bununla birlikte sonuçlar henüz ön deney niteliğindedir; daha fazla seed, daha uzun RL eğitimi, hiperparametre taraması, güven aralıkları ve daha gerçekçi fizik/sensör modelleriyle genişletilmelidir.
+
+\begin{thebibliography}{9}
+
+\bibitem{ncp}
+Lechner, M., Hasani, R., Amini, A., Henzinger, T. A., Rus, D., \& Grosu, R. Neural circuit policies enabling auditable autonomy. \textit{Nature Machine Intelligence}, 2020.
+
+\bibitem{ltc}
+Hasani, R., Lechner, M., Amini, A., Rus, D., \& Grosu, R. Liquid time-constant networks. \textit{AAAI Conference on Artificial Intelligence}, 2021.
+
+\bibitem{cfc}
+Hasani, R., Lechner, M., Amini, A., Liebenwein, L., Tschaikowski, M., Teschl, G., \& Rus, D. Closed-form continuous-time neural networks. arXiv preprint arXiv:2106.13898, 2021.
+
+\bibitem{ncps}
+MIT CSAIL. \texttt{ncps}: Neural Circuit Policies library for PyTorch and TensorFlow. Project software package.
+
+\end{thebibliography}
+
+\end{document}

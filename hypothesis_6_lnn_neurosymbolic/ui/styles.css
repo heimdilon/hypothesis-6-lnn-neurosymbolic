@@ -1,0 +1,399 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8f6;
+  --surface: #ffffff;
+  --ink: #1d2422;
+  --muted: #63706c;
+  --line: #d8dfdc;
+  --accent: #16837a;
+  --accent-strong: #0f625c;
+  --danger: #b64252;
+  --field: #f0f4f2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 1120px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button,
+.file-button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0.68rem 0.82rem;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+button:hover,
+.file-button:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+  transform: none;
+}
+
+.primary {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.primary:hover {
+  background: var(--accent-strong);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.wide {
+  width: 100%;
+}
+
+.topbar {
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 1.1rem;
+}
+
+.eyebrow {
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.22rem;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+#saveState {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 290px minmax(540px, 1fr) 340px;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: calc(100vh - 76px);
+}
+
+.panel,
+.workspace {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.panel {
+  padding: 1rem;
+  overflow: auto;
+}
+
+.panel section + section {
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+label,
+.label {
+  display: block;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-bottom: 0.45rem;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  padding: 0.68rem 0.75rem;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin-top: 0.5rem;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.4rem;
+}
+
+.segmented button {
+  padding: 0.58rem 0.25rem;
+  font-size: 0.82rem;
+}
+
+.segmented .active {
+  background: var(--ink);
+  color: #ffffff;
+  border-color: var(--ink);
+}
+
+.range-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+}
+
+.coord-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.coord-grid label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.coord-grid input {
+  margin-top: 0.28rem;
+  padding: 0.55rem 0.55rem;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.button-row.split {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0.55rem;
+}
+
+.button-row.split button {
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+}
+
+#importMap {
+  display: none;
+}
+
+.workspace {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workspace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.stats {
+  display: flex;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#mapCanvas {
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 145px);
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  cursor: crosshair;
+}
+
+.controls {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.control-row {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.control-row .range-head {
+  margin-bottom: 0;
+}
+
+.control-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.control-number {
+  padding: 0.48rem 0.55rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  margin: 0.5rem 0;
+}
+
+.check input {
+  accent-color: var(--accent);
+}
+
+.trace-table {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.84rem;
+}
+
+.progress-wrap {
+  margin-top: 0.9rem;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 0.4rem;
+}
+
+.progress-track {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+
+.progress-bar {
+  width: 0%;
+  height: 100%;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, var(--accent), var(--accent-strong)),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.2) 0 8px, transparent 8px 16px);
+  transition: width 180ms ease;
+}
+
+.trace-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 0.5fr;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.trace-row b {
+  font-weight: 700;
+}
+
+.output-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.output-links a {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--accent-strong);
+  text-decoration: none;
+  padding: 0.55rem;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.results img {
+  display: none;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 0.85rem;
+}
