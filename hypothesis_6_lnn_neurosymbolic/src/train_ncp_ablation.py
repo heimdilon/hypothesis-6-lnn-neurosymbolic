@@ -24,7 +24,7 @@ from run_lnn_experiment import (
     RESULTS,
     EpisodeResult,
     FixedPolicy,
-    _wilson_ci,
+    wilson_ci,
     aggregate,
     collides,
     features,
@@ -90,54 +90,48 @@ def mann_whitney_u(x: list[float], y: list[float]) -> tuple[float, float]:
     z = (u1 - mu) / sigma
     # Two-sided p-value via standard normal CDF approximation
     p = 2 * _normal_cdf(-abs(z))
+    p = max(0.0, min(1.0, p))
     return u1, p
 
 
 def _normal_cdf(z: float) -> float:
-    """Standard normal CDF approximation (Abramowitz & Stegun 26.2.17)."""
+    """Standard normal CDF via erf approximation (Abramowitz & Stegun 26.2.17).
+
+    The A&S coefficients approximate erf(x), so we evaluate at x = |z|/sqrt(2)
+    and convert: Phi(z) = 0.5 * (1 + erf(z / sqrt(2))).
+    """
     if z < -8.0:
         return 0.0
     if z > 8.0:
         return 1.0
     a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
     p_coef = 0.3275911
+    x = abs(z) / math.sqrt(2)
     sign = 1.0 if z >= 0 else -1.0
-    t = 1.0 / (1.0 + p_coef * abs(z))
-    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-z * z / 2)
-    return 0.5 * (1.0 + sign * y)
+    t = 1.0 / (1.0 + p_coef * x)
+    erf_approx = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-x * x)
+    return 0.5 * (1.0 + sign * erf_approx)
 
 
 def cohens_d(x: list[float], y: list[float]) -> float:
-    """Cohen's d with pooled standard deviation."""
+    """Cohen's d with pooled standard deviation.
+
+    When the pooled SD is ~0 but means differ (e.g. binary data with perfect
+    separation), returns ±inf to signal a maximal effect rather than a
+    misleading 0.0.
+    """
     n1, n2 = len(x), len(y)
     if n1 < 2 or n2 < 2:
         return 0.0
     m1, m2 = np.mean(x), np.mean(y)
+    mean_diff = float(m1 - m2)
     s1, s2 = np.std(x, ddof=1), np.std(y, ddof=1)
     pooled = math.sqrt(((n1 - 1) * s1 ** 2 + (n2 - 1) * s2 ** 2) / (n1 + n2 - 2))
     if pooled < 1e-12:
-        return 0.0
-    return float((m1 - m2) / pooled)
-
-
-def bootstrap_ci(
-    values: list[float],
-    n_boot: int = 2000,
-    alpha: float = 0.05,
-    rng: np.random.Generator | None = None,
-) -> tuple[float, float, float]:
-    """Bootstrap percentile CI. Returns (mean, ci_lower, ci_upper)."""
-    if not values:
-        return 0.0, 0.0, 0.0
-    rng = rng or np.random.default_rng(42)
-    arr = np.asarray(values, dtype=float)
-    means = np.empty(n_boot)
-    for i in range(n_boot):
-        sample = rng.choice(arr, size=len(arr), replace=True)
-        means[i] = sample.mean()
-    lo = float(np.percentile(means, 100 * alpha / 2))
-    hi = float(np.percentile(means, 100 * (1 - alpha / 2)))
-    return float(arr.mean()), lo, hi
+        if math.isclose(mean_diff, 0.0, abs_tol=1e-12):
+            return 0.0
+        return math.copysign(math.inf, mean_diff)
+    return float(mean_diff / pooled)
 
 
 def benjamini_hochberg(p_values: list[float]) -> list[float]:
@@ -655,10 +649,10 @@ def build_group_tables(results: list[EpisodeResult]) -> tuple[list[dict], list[d
         n = len(rows)
         successes = sum(r["success"] for r in rows)
         sr = successes / max(n, 1)
-        sr_lo, sr_hi = _wilson_ci(successes, n)
+        sr_lo, sr_hi = wilson_ci(successes, n)
         cr = float(np.mean([r["collision"] for r in rows]))
         cr_successes = sum(r["collision"] for r in rows)
-        cr_lo, cr_hi = _wilson_ci(cr_successes, n)
+        cr_lo, cr_hi = wilson_ci(cr_successes, n)
         steps_m, steps_s, steps_se, _, _ = _stats([r["steps"] for r in rows])
         mc_m, mc_s, mc_se, _, _ = _stats([r["min_clearance"] for r in rows])
         nm_m, _, _, _, _ = _stats([float(r["near_misses"]) for r in rows])
@@ -901,7 +895,7 @@ def write_summary_markdown(
             markdown_table(
                 statistical_comparisons,
                 ["scenario_group", "comparison", "controller_a", "controller_b",
-                 "n_a", "n_b", "mean_a", "mean_b", "delta",
+                 "n_a", "n_b", "small_n_warning", "mean_a", "mean_b", "delta",
                  "mann_whitney_U", "p_value_raw", "p_value_bh_corrected",
                  "cohens_d", "significant_005"],
                 formats,
@@ -920,6 +914,7 @@ def write_summary_markdown(
             f"- {n_seeds} bağımsız seed ile eğitim yapılmış, sonuçlar tüm seed'ler üzerinden toplanmıştır.",
             "- Wilson score interval (95% CI) küçük örneklem için uygun binomial güven aralığı sağlar.",
             "- Benjamini-Hochberg FDR düzeltmesi çoklu karşılaştırma hatasını kontrol eder.",
+            "- `small_n_warning=yes`: Grup başına n<8 olduğunda Mann-Whitney U normal yaklaşımı güvenilirliğini yitirir; bu satırlardaki p-değerleri dikkatli yorumlanmalıdır.",
             "- Aksiyon uyuşmazlığı (action disagreement): NCP/MLP'nin sabit politikadan farklı karar verdiği adım sayısı.",
             "- Yararlı uyuşmazlık (beneficial disagreement): Farklı kararın daha iyi clearance veya ilerleme sağladığı adım sayısı.",
         ]
@@ -980,18 +975,18 @@ def plot_ablation(grouped_rows: list[dict], out_path: Path) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), constrained_layout=True)
     axes[0].bar(x, success, color=colors, yerr=[s_err_lo, s_err_hi], capsize=3, ecolor="#333")
     axes[0].set_ylim(0, 1.05)
-    axes[0].set_ylabel("success rate")
+    axes[0].set_ylabel("success rate (95% CI)")
     axes[0].grid(axis="y", alpha=0.25)
     axes[1].bar(x, collision, color=colors, yerr=[c_err_lo, c_err_hi], capsize=3, ecolor="#333")
     axes[1].set_ylim(0, 1.05)
-    axes[1].set_ylabel("collision rate")
+    axes[1].set_ylabel("collision rate (95% CI)")
     axes[1].grid(axis="y", alpha=0.25)
     axes[2].bar(x, clearance, color=colors, yerr=cl_err, capsize=3, ecolor="#333")
-    axes[2].set_ylabel("min clearance")
+    axes[2].set_ylabel("min clearance (±1 std)")
     axes[2].grid(axis="y", alpha=0.25)
     axes[2].set_xticks(x)
     axes[2].set_xticklabels(labels, rotation=0, fontsize=7)
-    fig.suptitle("Hard-map ablation: NCP vs MLP vs random (with 95% CI)")
+    fig.suptitle("Hard-map ablation: NCP vs MLP vs random")
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
@@ -1029,6 +1024,7 @@ def build_statistical_comparisons(detail_rows: list[dict]) -> list[dict]:
             b_vals = [r["success"] for r in group_rows if r["controller"] == ctrl_b]
             if len(a_vals) < 3 or len(b_vals) < 3:
                 continue
+            small_n = len(a_vals) < 8 or len(b_vals) < 8
             u, p = mann_whitney_u(a_vals, b_vals)
             d = cohens_d(a_vals, b_vals)
             p_values.append(p)
@@ -1039,6 +1035,7 @@ def build_statistical_comparisons(detail_rows: list[dict]) -> list[dict]:
                 "controller_b": ctrl_b,
                 "n_a": len(a_vals),
                 "n_b": len(b_vals),
+                "small_n_warning": "yes" if small_n else "no",
                 "mean_a": float(np.mean(a_vals)),
                 "mean_b": float(np.mean(b_vals)),
                 "delta": float(np.mean(a_vals)) - float(np.mean(b_vals)),
@@ -1083,6 +1080,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         for cell in ["cfc", "ltc", "mlp"]:
             cell_seed = current_seed + {"cfc": 1, "ltc": 2, "mlp": 3}[cell]
+            torch.manual_seed(cell_seed)
             if cell == "mlp":
                 model: nn.Module = MLPDiscreteModel(input_dim, args.hidden_dim, cell_seed)
             else:
@@ -1119,6 +1117,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         # Random residual controls (untrained NCP models)
         for cell in ["cfc", "ltc"]:
             random_seed = current_seed + 999
+            torch.manual_seed(random_seed)
             random_model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, random_seed)
             random_model.train(False)
             trained[(cell, "random")] = random_model

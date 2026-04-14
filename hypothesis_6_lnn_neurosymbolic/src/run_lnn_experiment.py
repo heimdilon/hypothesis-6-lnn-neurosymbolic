@@ -4,7 +4,7 @@ import argparse
 import csv
 import heapq
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -806,7 +806,7 @@ def run_episode(
     )
 
 
-def _wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+def wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval for binomial proportion -- works well for small n."""
     if n == 0:
         return 0.0, 1.0
@@ -835,7 +835,7 @@ def aggregate(results: list[EpisodeResult]) -> list[dict[str, float | str]]:
         group = [r for r in results if r.controller == controller and r.scenario == scenario]
         n = len(group)
         successes = sum(r.success for r in group)
-        sr_lo, sr_hi = _wilson_ci(successes, n)
+        sr_lo, sr_hi = wilson_ci(successes, n)
 
         steps_m, steps_s, steps_se, _, _ = _metric_stats([r.steps for r in group])
         pl_m, pl_s, pl_se, _, _ = _metric_stats([r.path_length for r in group])
