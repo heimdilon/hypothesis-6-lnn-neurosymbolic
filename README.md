@@ -2,6 +2,8 @@
 
 Bu repo, yüksek lisans dersi için hazırlanmış bir araştırma prototipidir. Amaç, mobil robot navigasyonu literatüründen seçilen bir araştırma boşluğunu ve **Hipotez 6**'yı Python tabanlı 2D simülasyonlarla incelemektir.
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/heimdilon/hypothesis-6-lnn-neurosymbolic/blob/main/notebooks/h6_lnn_colab_demo.ipynb)
+
 Ayrıntılı teknik README ve çalıştırma talimatları:
 
 ➡️ [`hypothesis_6_lnn_neurosymbolic/README.md`](hypothesis_6_lnn_neurosymbolic/README.md)
@@ -76,9 +78,7 @@ Kısa yorum:
 
 Google Colab notebook:
 
-```text
-notebooks/h6_lnn_colab_demo.ipynb
-```
+[Colab'da aç](https://colab.research.google.com/github/heimdilon/hypothesis-6-lnn-neurosymbolic/blob/main/notebooks/h6_lnn_colab_demo.ipynb)
 
 Bu notebook repoyu Colab ortamına alır, bağımlılıkları kurar, kısa bir simülasyon çalıştırır, hazır görselleri gösterir ve isterse arayüzü Colab iframe içinde açar. Repo private olduğu için Colab'da çalıştırırken GitHub token gerekebilir.
 

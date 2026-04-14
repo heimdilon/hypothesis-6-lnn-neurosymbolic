@@ -145,9 +145,7 @@ torch
 
 Colab üzerinde denemek için repo kökünde bir notebook hazırlandı:
 
-```text
-notebooks/h6_lnn_colab_demo.ipynb
-```
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/heimdilon/hypothesis-6-lnn-neurosymbolic/blob/main/notebooks/h6_lnn_colab_demo.ipynb)
 
 Notebook şu işleri yapar:
 
@@ -157,8 +155,6 @@ Notebook şu işleri yapar:
 - Hazır PNG/GIF sonuçlarını gösterme
 - Arayüz sunucusunu Colab iframe içinde açma
 - İsteğe bağlı küçük CfC/LTC ablation deneyi çalıştırma
-
-Colab linki test edildikten sonra ana README'ye ayrıca eklenecektir.
 
 ## Etkileşimli Arayüzü Çalıştırma
 
