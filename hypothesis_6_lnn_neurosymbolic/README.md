@@ -141,6 +141,25 @@ ncps
 torch
 ```
 
+## Google Colab Notebook
+
+Colab üzerinde denemek için repo kökünde bir notebook hazırlandı:
+
+```text
+notebooks/h6_lnn_colab_demo.ipynb
+```
+
+Notebook şu işleri yapar:
+
+- Private repo için GitHub token ile clone alma
+- `requirements.txt` bağımlılıklarını kurma
+- Kısa `CfC residual` smoke simülasyonu çalıştırma
+- Hazır PNG/GIF sonuçlarını gösterme
+- Arayüz sunucusunu Colab iframe içinde açma
+- İsteğe bağlı küçük CfC/LTC ablation deneyi çalıştırma
+
+Colab linki test edildikten sonra ana README'ye ayrıca eklenecektir.
+
 ## Etkileşimli Arayüzü Çalıştırma
 
 ```powershell

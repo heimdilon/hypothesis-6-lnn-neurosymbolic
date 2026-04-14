@@ -74,6 +74,14 @@ Kısa yorum:
 
 ## Çalıştırma
 
+Google Colab notebook:
+
+```text
+notebooks/h6_lnn_colab_demo.ipynb
+```
+
+Bu notebook repoyu Colab ortamına alır, bağımlılıkları kurar, kısa bir simülasyon çalıştırır, hazır görselleri gösterir ve isterse arayüzü Colab iframe içinde açar. Repo private olduğu için Colab'da çalıştırırken GitHub token gerekebilir.
+
 Kurulum:
 
 ```powershell
@@ -107,6 +115,7 @@ C:\ProgramData\miniconda3\python.exe src\train_ncp_ablation.py --train-sequences
 - [`hypothesis_6_lnn_neurosymbolic/src/custom_map_server.py`](hypothesis_6_lnn_neurosymbolic/src/custom_map_server.py): Web arayüzü sunucusu
 - [`hypothesis_6_lnn_neurosymbolic/results/ncp_ablation_summary.md`](hypothesis_6_lnn_neurosymbolic/results/ncp_ablation_summary.md): Deney özeti
 - [`hypothesis_6_lnn_neurosymbolic/results/h6_ncp_project_report.pdf`](hypothesis_6_lnn_neurosymbolic/results/h6_ncp_project_report.pdf): Bilimsel rapor
+- [`notebooks/h6_lnn_colab_demo.ipynb`](notebooks/h6_lnn_colab_demo.ipynb): Google Colab demo notebook'u
 
 ## Sunum İçin Kısa Anlatım
 
