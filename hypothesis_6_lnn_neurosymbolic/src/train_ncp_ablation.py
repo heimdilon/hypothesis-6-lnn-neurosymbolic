@@ -49,7 +49,14 @@ OUTPUT_DIM = len(ACTION_DELTAS)
 # ---------------------------------------------------------------------------
 
 def mann_whitney_u(x: list[float], y: list[float]) -> tuple[float, float]:
-    """Mann-Whitney U test with normal approximation (valid for n >= 8).
+    """Mann-Whitney U test with normal (z-score) approximation.
+
+    The normal approximation is most reliable when min(n1, n2) >= 8; for
+    smaller samples the returned p-value is still defined and continuously
+    scaled, but it should be interpreted cautiously. Callers in this module
+    flag such comparisons with a ``small_n_warning`` column rather than
+    rejecting them outright. For exact p-values use a permutation test or an
+    implementation that tabulates the U distribution for small n.
 
     Returns (U_statistic, two_sided_p_value).
     """
