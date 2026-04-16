@@ -102,7 +102,7 @@ def mann_whitney_u(x: list[float], y: list[float]) -> tuple[float, float]:
 
 
 def _normal_cdf(z: float) -> float:
-    """Standard normal CDF via erf approximation (Abramowitz & Stegun 26.2.17).
+    """Standard normal CDF via erf approximation (Abramowitz & Stegun 7.1.26).
 
     The A&S coefficients approximate erf(x), so we evaluate at x = |z|/sqrt(2)
     and convert: Phi(z) = 0.5 * (1 + erf(z / sqrt(2))).
@@ -933,7 +933,9 @@ def plot_ablation(grouped_rows: list[dict], out_path: Path) -> None:
     hard = [r for r in grouped_rows if r["scenario_group"] == "hard"]
     order = [
         "fixed_policy",
+        "mlp_imitation_pure",
         "mlp_imitation_residual",
+        "mlp_rl_finetune_pure",
         "mlp_rl_finetune_residual",
         "cfc_imitation_pure",
         "cfc_imitation_residual",
@@ -1012,17 +1014,25 @@ def build_statistical_comparisons(detail_rows: list[dict]) -> list[dict]:
                 if pure in controllers and residual in controllers:
                     pairs.append((residual, pure, "residual_vs_pure"))
                 if residual in controllers and "fixed_policy" in controllers:
-                    pairs.append((residual, "fixed_policy", "ncp_vs_fixed"))
+                    label = "mlp_vs_fixed" if cell == "mlp" else "ncp_vs_fixed"
+                    pairs.append((residual, "fixed_policy", label))
             random = f"{cell}_random_residual"
             best_res = f"{cell}_rl_finetune_residual"
             if random in controllers and best_res in controllers:
                 pairs.append((best_res, random, "trained_vs_random"))
+        for cell in ["cfc", "ltc"]:
+            for stage in ["imitation", "rl_finetune"]:
+                for variant in ["pure", "residual"]:
+                    ncp_name = f"{cell}_{stage}_{variant}"
+                    mlp_name = f"mlp_{stage}_{variant}"
+                    if ncp_name in controllers and mlp_name in controllers:
+                        pairs.append((ncp_name, mlp_name, "ncp_vs_mlp"))
         for stage in ["imitation", "rl_finetune"]:
             for variant in ["pure", "residual"]:
                 cfc_name = f"cfc_{stage}_{variant}"
-                mlp_name = f"mlp_{stage}_{variant}"
-                if cfc_name in controllers and mlp_name in controllers:
-                    pairs.append((cfc_name, mlp_name, "ncp_vs_mlp"))
+                ltc_name = f"ltc_{stage}_{variant}"
+                if cfc_name in controllers and ltc_name in controllers:
+                    pairs.append((cfc_name, ltc_name, "cfc_vs_ltc"))
 
         p_values: list[float] = []
         comparison_data: list[dict] = []
