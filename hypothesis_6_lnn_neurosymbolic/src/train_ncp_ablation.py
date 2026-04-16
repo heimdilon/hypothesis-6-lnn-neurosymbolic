@@ -1130,8 +1130,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # Train the fixed baseline once (seed-independent) so all NCP/MLP seeds
     # compare against the *same* controller and aggregated metrics do not mix
     # different baselines. Seed-level variability then reflects only NCP/MLP
-    # training randomness, not baseline drift. See Copilot review comment on
-    # train_ncp_ablation.py:1074.
+    # training randomness, not baseline drift.
     base_weights = train_fixed_policy(np.random.default_rng(args.seed))
     input_dim = base_weights.shape[0]
 
