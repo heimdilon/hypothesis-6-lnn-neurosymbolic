@@ -631,12 +631,23 @@ def scenario_group(scenario: str) -> str:
     return "other"
 
 
-def build_group_tables(results: list[EpisodeResult]) -> tuple[list[dict], list[dict]]:
+def build_group_tables(
+    records: list[tuple[int, EpisodeResult]],
+) -> tuple[list[dict], list[dict]]:
+    """Build detail + group summary tables.
+
+    ``records`` is a list of ``(seed_idx, EpisodeResult)`` pairs so the detail
+    rows and group summaries can surface *both* pooled (episode-level) and
+    seed-level uncertainty. Seed-level CIs are what the "multi-seed" claim
+    actually supports: they estimate variability across independent training
+    runs rather than treating every episode as independent.
+    """
     detail = []
-    for result in results:
+    for seed_idx, result in records:
         row = asdict(result)
         row.update(controller_metadata(result.controller))
         row["scenario_group"] = scenario_group(result.scenario)
+        row["seed_idx"] = int(seed_idx)
         detail.append(row)
 
     def _stats(vals: list[float]) -> tuple[float, float, float, float, float]:
@@ -647,6 +658,30 @@ def build_group_tables(results: list[EpisodeResult]) -> tuple[list[dict], list[d
         s = float(np.std(vals, ddof=1))
         se = s / math.sqrt(n)
         return m, s, se, m - 1.96 * se, m + 1.96 * se
+
+    def _seed_level_ci(
+        rows: list[dict], key: str
+    ) -> tuple[int, float | None, float | None, float | None, float | None]:
+        """Aggregate by seed_idx first, then compute across-seed statistics.
+
+        Returns (n_seeds, seed_mean, seed_std, seed_ci_lower, seed_ci_upper).
+        With n_seeds < 2 the std/CI are undefined and returned as ``None``.
+        """
+        by_seed: dict[int, list[float]] = {}
+        for r in rows:
+            by_seed.setdefault(r["seed_idx"], []).append(float(r.get(key, 0.0)))
+        per_seed_means = [float(np.mean(v)) for v in by_seed.values() if len(v) > 0]
+        n_seeds = len(per_seed_means)
+        if n_seeds == 0:
+            return 0, None, None, None, None
+        mean = float(np.mean(per_seed_means))
+        if n_seeds < 2:
+            return n_seeds, mean, None, None, None
+        std = float(np.std(per_seed_means, ddof=1))
+        se = std / math.sqrt(n_seeds)
+        # Normal-approximation CI (n_seeds typically 3-10; a t-based CI would be
+        # stricter but would add a scipy/t-distribution dependency).
+        return n_seeds, mean, std, mean - 1.96 * se, mean + 1.96 * se
 
     grouped = []
     keys = sorted({(r["controller"], r["scenario_group"]) for r in detail})
@@ -667,18 +702,30 @@ def build_group_tables(results: list[EpisodeResult]) -> tuple[list[dict], list[d
         ad_m, _, _, _, _ = _stats([float(r.get("action_disagreements", 0)) for r in rows])
         bd_m, _, _, _, _ = _stats([float(r.get("beneficial_disagreements", 0)) for r in rows])
 
+        n_seeds_used, sr_seed_m, sr_seed_s, sr_seed_lo, sr_seed_hi = _seed_level_ci(rows, "success")
+        _, cr_seed_m, cr_seed_s, cr_seed_lo, cr_seed_hi = _seed_level_ci(rows, "collision")
+
         grouped.append(
             {
                 "controller": controller,
                 **meta,
                 "scenario_group": group,
                 "n": n,
+                "n_seeds": n_seeds_used,
                 "success_rate": sr,
                 "success_ci_lower": sr_lo,
                 "success_ci_upper": sr_hi,
+                "success_seed_mean": sr_seed_m,
+                "success_seed_std": sr_seed_s,
+                "success_seed_ci_lower": sr_seed_lo,
+                "success_seed_ci_upper": sr_seed_hi,
                 "collision_rate": cr,
                 "collision_ci_lower": cr_lo,
                 "collision_ci_upper": cr_hi,
+                "collision_seed_mean": cr_seed_m,
+                "collision_seed_std": cr_seed_s,
+                "collision_seed_ci_lower": cr_seed_lo,
+                "collision_seed_ci_upper": cr_seed_hi,
                 "mean_steps": steps_m,
                 "std_steps": steps_s,
                 "mean_min_clearance": mc_m,
@@ -1078,16 +1125,21 @@ def run_pipeline(args: argparse.Namespace) -> None:
     eval_scenarios = list(DEFAULT_SCENARIOS) + list(HARD_SCENARIOS)
 
     all_training_rows: list[dict] = []
-    all_eval_results: list[EpisodeResult] = []
+    all_eval_records: list[tuple[int, EpisodeResult]] = []
+
+    # Train the fixed baseline once (seed-independent) so all NCP/MLP seeds
+    # compare against the *same* controller and aggregated metrics do not mix
+    # different baselines. Seed-level variability then reflects only NCP/MLP
+    # training randomness, not baseline drift. See Copilot review comment on
+    # train_ncp_ablation.py:1074.
+    base_weights = train_fixed_policy(np.random.default_rng(args.seed))
+    input_dim = base_weights.shape[0]
 
     for seed_idx in range(args.n_seeds):
         current_seed = args.seed + seed_idx * 1000
         print(f"\n=== Seed {seed_idx + 1}/{args.n_seeds} (seed={current_seed}) ===")
         rng = np.random.default_rng(current_seed)
         torch.manual_seed(current_seed)
-
-        base_weights = train_fixed_policy(np.random.default_rng(current_seed))
-        input_dim = base_weights.shape[0]
 
         x_train, y_train = generate_imitation_dataset(rng, train_scenarios, args.train_sequences, args.seq_len)
         x_val, y_val = generate_imitation_dataset(rng, train_scenarios, args.val_sequences, args.seq_len)
@@ -1148,11 +1200,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
             args.eval_episodes, args.eval_max_steps,
             args.residual_scale, current_seed,
         )
-        all_eval_results.extend(seed_results)
+        all_eval_records.extend((seed_idx, r) for r in seed_results)
         print(f"  Seed {seed_idx}: {len(seed_results)} episodes completed.")
 
     # Aggregate all results across seeds
-    detail_rows, grouped_rows = build_group_tables(all_eval_results)
+    all_eval_results = [r for _, r in all_eval_records]
+    detail_rows, grouped_rows = build_group_tables(all_eval_records)
     residual_vs_pure, cfc_vs_ltc = build_pairwise_tables(grouped_rows)
     statistical_comparisons = build_statistical_comparisons(detail_rows)
     scenario_summary = aggregate(all_eval_results)
@@ -1202,7 +1255,19 @@ def main() -> None:
     parser.add_argument("--eval-max-steps", type=int, default=MAX_STEPS)
     parser.add_argument("--n-seeds", type=int, default=5,
                         help="Number of independent training seeds for variance estimation.")
+    parser.add_argument("--quick", action="store_true",
+                        help="Smoke-test preset: single seed, short training, 3 eval episodes. "
+                             "Overrides --n-seeds, --eval-episodes, --imitation-epochs and "
+                             "--rl-episodes. Useful for CI / local iteration.")
     args = parser.parse_args()
+    if args.quick:
+        # Explicit overrides keep the preset semantic (users see what changed).
+        args.n_seeds = 1
+        args.eval_episodes = 3
+        args.imitation_epochs = 2
+        args.rl_episodes = 3
+        print("[--quick] Using smoke-test preset: n_seeds=1, eval_episodes=3, "
+              "imitation_epochs=2, rl_episodes=3")
     run_pipeline(args)
 
 
