@@ -24,6 +24,7 @@ from run_lnn_experiment import (
     RESULTS,
     EpisodeResult,
     FixedPolicy,
+    wilson_ci,
     aggregate,
     collides,
     features,
@@ -41,6 +42,119 @@ from run_lnn_experiment import (
 
 MODELS = RESULTS / "models"
 OUTPUT_DIM = len(ACTION_DELTAS)
+
+
+# ---------------------------------------------------------------------------
+# Statistical utilities (no scipy dependency)
+# ---------------------------------------------------------------------------
+
+def mann_whitney_u(x: list[float], y: list[float]) -> tuple[float, float]:
+    """Mann-Whitney U test with normal (z-score) approximation.
+
+    The normal approximation is most reliable when min(n1, n2) >= 8; for
+    smaller samples the returned p-value is still defined and continuously
+    scaled, but it should be interpreted cautiously. Callers in this module
+    flag such comparisons with a ``small_n_warning`` column rather than
+    rejecting them outright. For exact p-values use a permutation test or an
+    implementation that tabulates the U distribution for small n.
+
+    Returns (U_statistic, two_sided_p_value).
+    """
+    n1, n2 = len(x), len(y)
+    if n1 == 0 or n2 == 0:
+        return 0.0, 1.0
+    combined = [(v, 0) for v in x] + [(v, 1) for v in y]
+    combined.sort(key=lambda t: t[0])
+    # Assign ranks with tie handling
+    ranks: list[float] = [0.0] * len(combined)
+    i = 0
+    while i < len(combined):
+        j = i
+        while j < len(combined) and combined[j][0] == combined[i][0]:
+            j += 1
+        avg_rank = (i + j + 1) / 2  # 1-based average
+        for k in range(i, j):
+            ranks[k] = avg_rank
+        i = j
+    r1 = sum(ranks[k] for k in range(len(combined)) if combined[k][1] == 0)
+    u1 = r1 - n1 * (n1 + 1) / 2
+    mu = n1 * n2 / 2
+    # Tie correction
+    tie_counts: list[int] = []
+    i = 0
+    while i < len(combined):
+        j = i
+        while j < len(combined) and combined[j][0] == combined[i][0]:
+            j += 1
+        if j - i > 1:
+            tie_counts.append(j - i)
+        i = j
+    n_total = n1 + n2
+    tie_correction = sum(t ** 3 - t for t in tie_counts) / (12 * n_total * (n_total - 1)) if tie_counts else 0.0
+    sigma = math.sqrt(n1 * n2 * ((n_total + 1) / 12 - tie_correction))
+    if sigma < 1e-12:
+        return u1, 1.0
+    z = (u1 - mu) / sigma
+    # Two-sided p-value via standard normal CDF approximation
+    p = 2 * _normal_cdf(-abs(z))
+    p = max(0.0, min(1.0, p))
+    return u1, p
+
+
+def _normal_cdf(z: float) -> float:
+    """Standard normal CDF via erf approximation (Abramowitz & Stegun 26.2.17).
+
+    The A&S coefficients approximate erf(x), so we evaluate at x = |z|/sqrt(2)
+    and convert: Phi(z) = 0.5 * (1 + erf(z / sqrt(2))).
+    """
+    if z < -8.0:
+        return 0.0
+    if z > 8.0:
+        return 1.0
+    a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
+    p_coef = 0.3275911
+    x = abs(z) / math.sqrt(2)
+    sign = 1.0 if z >= 0 else -1.0
+    t = 1.0 / (1.0 + p_coef * x)
+    erf_approx = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-x * x)
+    return 0.5 * (1.0 + sign * erf_approx)
+
+
+def cohens_d(x: list[float], y: list[float]) -> float:
+    """Cohen's d with pooled standard deviation.
+
+    When the pooled SD is ~0 but means differ (e.g. binary data with perfect
+    separation), returns ±inf to signal a maximal effect rather than a
+    misleading 0.0.
+    """
+    n1, n2 = len(x), len(y)
+    if n1 < 2 or n2 < 2:
+        return 0.0
+    m1, m2 = np.mean(x), np.mean(y)
+    mean_diff = float(m1 - m2)
+    s1, s2 = np.std(x, ddof=1), np.std(y, ddof=1)
+    pooled = math.sqrt(((n1 - 1) * s1 ** 2 + (n2 - 1) * s2 ** 2) / (n1 + n2 - 2))
+    if pooled < 1e-12:
+        if math.isclose(mean_diff, 0.0, abs_tol=1e-12):
+            return 0.0
+        return math.copysign(math.inf, mean_diff)
+    return float(mean_diff / pooled)
+
+
+def benjamini_hochberg(p_values: list[float]) -> list[float]:
+    """Benjamini-Hochberg FDR correction."""
+    m = len(p_values)
+    if m == 0:
+        return []
+    indexed = sorted(enumerate(p_values), key=lambda t: t[1])
+    corrected = [0.0] * m
+    prev = 1.0
+    for rank_from_end, (orig_idx, p) in enumerate(reversed(indexed)):
+        rank = m - rank_from_end  # 1-based rank
+        adjusted = min(prev, p * m / rank)
+        corrected[orig_idx] = min(adjusted, 1.0)
+        prev = adjusted
+    return corrected
 
 
 class NCPDiscreteModel(nn.Module):
@@ -77,10 +191,35 @@ class NCPDiscreteModel(nn.Module):
         return self.rnn(x, hx)
 
 
+class MLPDiscreteModel(nn.Module):
+    """Feedforward MLP baseline -- no recurrence, same capacity budget."""
+
+    def __init__(self, input_dim: int, hidden_dim: int, seed: int):
+        super().__init__()
+        self.input_dim = int(input_dim)
+        self.hidden_dim = int(hidden_dim)
+        self.seed = int(seed)
+        self.cell_type = "mlp"
+        torch.manual_seed(self.seed)
+        self.net = nn.Sequential(
+            nn.Linear(self.input_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, OUTPUT_DIM),
+        )
+
+    def forward(self, x: torch.Tensor, hx=None) -> tuple[torch.Tensor, torch.Tensor]:
+        logits = self.net(x)  # (batch, seq, OUTPUT_DIM)
+        return logits, hx  # hx passthrough for API compatibility
+
+
 class OfflineNCPPolicy:
+    """Wraps a trained NCP or MLP model for offline evaluation."""
+
     def __init__(
         self,
-        model: NCPDiscreteModel,
+        model: nn.Module,
         base_weights: np.ndarray,
         baseline_scale: float,
         ncp_scale: float,
@@ -345,6 +484,7 @@ def run_eval_episode(
     scenario: str,
     seed: int,
     max_steps: int,
+    baseline_weights: np.ndarray | None = None,
 ) -> EpisodeResult:
     rng = np.random.default_rng(seed)
     obstacles = scenario_obstacles(scenario)
@@ -358,7 +498,9 @@ def run_eval_episode(
     path_length = 0.0
     near_misses = 0
     min_clearance = 99.0
-    progress_history = []
+    progress_history: list[float] = []
+    action_disagreements = 0
+    beneficial_disagreements = 0
     prev_dist = norm(goal - pos)
     for step in range(max_steps):
         true_ranges = ray_cast(pos, heading, obstacles)
@@ -367,6 +509,20 @@ def run_eval_episode(
         action, _scores = controller.act(x, pos, heading, goal, obstacles)
         new_heading = wrap_angle(heading + float(ACTION_DELTAS[action]))
         new_pos = pos + 0.32 * np.array([math.cos(new_heading), math.sin(new_heading)])
+
+        # Action disagreement tracking
+        if baseline_weights is not None:
+            baseline_action = int(np.argmax(x @ baseline_weights))
+            if action != baseline_action:
+                action_disagreements += 1
+                bl_heading = wrap_angle(heading + float(ACTION_DELTAS[baseline_action]))
+                bl_pos = pos + 0.32 * np.array([math.cos(bl_heading), math.sin(bl_heading)])
+                bl_clearance = obstacle_clearance(bl_pos, obstacles)
+                ctrl_clearance = obstacle_clearance(new_pos, obstacles)
+                bl_dist = norm(goal - bl_pos)
+                if ctrl_clearance > bl_clearance or norm(goal - new_pos) < bl_dist:
+                    beneficial_disagreements += 1
+
         path_length += norm(new_pos - pos)
         clearance = obstacle_clearance(new_pos, obstacles)
         min_clearance = min(min_clearance, clearance)
@@ -377,55 +533,31 @@ def run_eval_episode(
             near_misses += 1
         if clearance <= 0:
             return EpisodeResult(
-                controller_name,
-                scenario,
-                seed,
-                0,
-                1,
-                step + 1,
-                path_length,
-                min_clearance,
-                near_misses,
-                0,
-                max_steps,
+                controller_name, scenario, seed, 0, 1, step + 1,
+                path_length, min_clearance, near_misses, 0, max_steps,
                 float(np.mean(progress_history)),
+                action_disagreements, beneficial_disagreements,
             )
         pos = new_pos
         heading = new_heading
         prev_dist = new_dist
         if new_dist < 0.45:
             return EpisodeResult(
-                controller_name,
-                scenario,
-                seed,
-                1,
-                0,
-                step + 1,
-                path_length,
-                min_clearance,
-                near_misses,
-                0,
-                step + 1,
+                controller_name, scenario, seed, 1, 0, step + 1,
+                path_length, min_clearance, near_misses, 0, step + 1,
                 float(np.mean(progress_history)),
+                action_disagreements, beneficial_disagreements,
             )
     return EpisodeResult(
-        controller_name,
-        scenario,
-        seed,
-        0,
-        0,
-        max_steps,
-        path_length,
-        min_clearance,
-        near_misses,
-        0,
-        max_steps,
+        controller_name, scenario, seed, 0, 0, max_steps,
+        path_length, min_clearance, near_misses, 0, max_steps,
         float(np.mean(progress_history)),
+        action_disagreements, beneficial_disagreements,
     )
 
 
 def evaluate_models(
-    trained: dict[tuple[str, str], NCPDiscreteModel],
+    trained: dict[tuple[str, str], nn.Module],
     base_weights: np.ndarray,
     scenarios: list[str],
     episodes: int,
@@ -444,9 +576,18 @@ def evaluate_models(
                     scenario,
                     episode_seed,
                     max_steps,
+                    baseline_weights=None,
                 )
             )
             for (cell, stage), model in trained.items():
+                if stage == "random":
+                    # Random residual control -- untrained model
+                    controller = OfflineNCPPolicy(model, base_weights, 1.0, residual_scale)
+                    name = f"{cell}_random_residual"
+                    results.append(run_eval_episode(
+                        name, controller, scenario, episode_seed, max_steps,
+                        baseline_weights=base_weights))
+                    continue
                 variants = [
                     ("pure", 0.0, 1.0),
                     ("residual", 1.0, residual_scale),
@@ -454,7 +595,9 @@ def evaluate_models(
                 for variant, baseline_scale, ncp_scale in variants:
                     controller = OfflineNCPPolicy(model, base_weights, baseline_scale, ncp_scale)
                     name = f"{cell}_{stage}_{variant}"
-                    results.append(run_eval_episode(name, controller, scenario, episode_seed, max_steps))
+                    results.append(run_eval_episode(
+                        name, controller, scenario, episode_seed, max_steps,
+                        baseline_weights=base_weights))
     return results
 
 
@@ -469,7 +612,14 @@ def write_rows(path: Path, rows: list[dict]) -> None:
 def controller_metadata(name: str) -> dict:
     if name == "fixed_policy":
         return {"cell": "fixed", "stage": "fixed", "variant": "baseline"}
+    if name.endswith("_random_residual"):
+        cell = name.replace("_random_residual", "")
+        return {"cell": cell, "stage": "random", "variant": "residual"}
     parts = name.split("_")
+    cell = parts[0]
+    if cell == "mlp":
+        stage = f"{parts[1]}_{parts[2]}" if len(parts) > 2 and parts[1] == "rl" else parts[1]
+        return {"cell": "mlp", "stage": stage, "variant": parts[-1]}
     return {"cell": parts[0], "stage": f"{parts[1]}_{parts[2]}" if parts[1] == "rl" else parts[1], "variant": parts[-1]}
 
 
@@ -489,23 +639,55 @@ def build_group_tables(results: list[EpisodeResult]) -> tuple[list[dict], list[d
         row["scenario_group"] = scenario_group(result.scenario)
         detail.append(row)
 
+    def _stats(vals: list[float]) -> tuple[float, float, float, float, float]:
+        n = len(vals)
+        m = float(np.mean(vals))
+        if n <= 1:
+            return m, 0.0, 0.0, m, m
+        s = float(np.std(vals, ddof=1))
+        se = s / math.sqrt(n)
+        return m, s, se, m - 1.96 * se, m + 1.96 * se
+
     grouped = []
     keys = sorted({(r["controller"], r["scenario_group"]) for r in detail})
     for controller, group in keys:
         rows = [r for r in detail if r["controller"] == controller and r["scenario_group"] == group]
         meta = controller_metadata(controller)
+        n = len(rows)
+        successes = sum(r["success"] for r in rows)
+        sr = successes / max(n, 1)
+        sr_lo, sr_hi = wilson_ci(successes, n)
+        cr = float(np.mean([r["collision"] for r in rows]))
+        cr_successes = sum(r["collision"] for r in rows)
+        cr_lo, cr_hi = wilson_ci(cr_successes, n)
+        steps_m, steps_s, steps_se, _, _ = _stats([r["steps"] for r in rows])
+        mc_m, mc_s, mc_se, _, _ = _stats([r["min_clearance"] for r in rows])
+        nm_m, _, _, _, _ = _stats([float(r["near_misses"]) for r in rows])
+        pr_m, pr_s, pr_se, _, _ = _stats([r["mean_progress"] for r in rows])
+        ad_m, _, _, _, _ = _stats([float(r.get("action_disagreements", 0)) for r in rows])
+        bd_m, _, _, _, _ = _stats([float(r.get("beneficial_disagreements", 0)) for r in rows])
+
         grouped.append(
             {
                 "controller": controller,
                 **meta,
                 "scenario_group": group,
-                "n": len(rows),
-                "success_rate": float(np.mean([r["success"] for r in rows])),
-                "collision_rate": float(np.mean([r["collision"] for r in rows])),
-                "mean_steps": float(np.mean([r["steps"] for r in rows])),
-                "mean_min_clearance": float(np.mean([r["min_clearance"] for r in rows])),
-                "mean_near_misses": float(np.mean([r["near_misses"] for r in rows])),
-                "mean_progress": float(np.mean([r["mean_progress"] for r in rows])),
+                "n": n,
+                "success_rate": sr,
+                "success_ci_lower": sr_lo,
+                "success_ci_upper": sr_hi,
+                "collision_rate": cr,
+                "collision_ci_lower": cr_lo,
+                "collision_ci_upper": cr_hi,
+                "mean_steps": steps_m,
+                "std_steps": steps_s,
+                "mean_min_clearance": mc_m,
+                "std_min_clearance": mc_s,
+                "mean_near_misses": nm_m,
+                "mean_progress": pr_m,
+                "std_progress": pr_s,
+                "mean_action_disagreements": ad_m,
+                "mean_beneficial_disagreements": bd_m,
             }
         )
     return detail, grouped
@@ -514,7 +696,7 @@ def build_group_tables(results: list[EpisodeResult]) -> tuple[list[dict], list[d
 def build_pairwise_tables(grouped_rows: list[dict]) -> tuple[list[dict], list[dict]]:
     by_key = {(r["cell"], r["stage"], r["variant"], r["scenario_group"]): r for r in grouped_rows}
     residual_vs_pure = []
-    for cell in ["cfc", "ltc"]:
+    for cell in ["cfc", "ltc", "mlp"]:
         for stage in ["imitation", "rl_finetune"]:
             for group in ["default", "hard"]:
                 pure = by_key.get((cell, stage, "pure", group))
@@ -588,6 +770,7 @@ def write_summary_markdown(
     grouped_rows: list[dict],
     residual_vs_pure: list[dict],
     cfc_vs_ltc: list[dict],
+    statistical_comparisons: list[dict],
     training_rows: list[dict],
     scenarios: list[str],
     args: argparse.Namespace,
@@ -597,7 +780,7 @@ def write_summary_markdown(
     default_rows = [r for r in grouped_rows if r["scenario_group"] == "default"]
     default_rows = sorted(default_rows, key=lambda r: (r["cell"], r["stage"], r["variant"]))
     train_tail = []
-    for cell in ["cfc", "ltc"]:
+    for cell in ["cfc", "ltc", "mlp"]:
         for phase in ["imitation", "rl_finetune"]:
             candidates = [r for r in training_rows if r["cell"] == cell and r["phase"] == phase]
             if candidates:
@@ -605,11 +788,20 @@ def write_summary_markdown(
 
     formats = {
         "success_rate": ".3f",
+        "success_ci_lower": ".3f",
+        "success_ci_upper": ".3f",
         "collision_rate": ".3f",
+        "collision_ci_lower": ".3f",
+        "collision_ci_upper": ".3f",
         "mean_steps": ".1f",
+        "std_steps": ".1f",
         "mean_min_clearance": ".3f",
+        "std_min_clearance": ".3f",
         "mean_near_misses": ".1f",
         "mean_progress": ".4f",
+        "std_progress": ".4f",
+        "mean_action_disagreements": ".1f",
+        "mean_beneficial_disagreements": ".1f",
         "pure_success": ".3f",
         "residual_success": ".3f",
         "delta_success": ".3f",
@@ -631,21 +823,32 @@ def write_summary_markdown(
         "loss": ".4f",
         "val_accuracy": ".3f",
         "episode_return": ".3f",
+        "mean_a": ".3f",
+        "mean_b": ".3f",
+        "delta": ".3f",
+        "mann_whitney_U": ".1f",
+        "p_value_raw": ".4f",
+        "p_value_bh_corrected": ".4f",
+        "cohens_d": ".3f",
     }
+    n_seeds = getattr(args, "n_seeds", 1)
     lines = [
-        "# Saf NCP imitation/RL ve ablation sonuçları",
+        "# NCP / MLP ablation sonuçları (istatistiksel analiz dahil)",
         "",
-        "Bu dosya resmi `ncps.torch` CfC/LTC katmanları ile üretilen offline imitation, kısa policy-gradient fine-tune ve pure/residual ablation sonuçlarını özetler.",
+        "Bu dosya resmi `ncps.torch` CfC/LTC katmanları ve MLP baseline ile üretilen offline imitation,",
+        "kısa policy-gradient fine-tune, pure/residual ablation ve istatistiksel karşılaştırma sonuçlarını özetler.",
         "",
         "## Deney konfigürasyonu",
         "",
+        f"- Bağımsız eğitim seed sayısı: {n_seeds}",
         f"- Eğitim senaryoları: {', '.join(DEFAULT_SCENARIOS)}",
         f"- Test senaryoları: {', '.join(scenarios)}",
         f"- Imitation sequence sayısı: {args.train_sequences}, doğrulama: {args.val_sequences}, sequence length: {args.seq_len}",
         f"- Imitation epoch: {args.imitation_epochs}, RL fine-tune episode: {args.rl_episodes}",
         f"- NCP hidden: {args.hidden_dim}, sparsity: {args.sparsity}, residual scale: {args.residual_scale}",
+        f"- Değerlendirme episode: {args.eval_episodes} (senaryo başına)",
         "",
-        "## Eğitim özeti",
+        "## Eğitim özeti (son seed)",
         "",
     ]
     lines.extend(markdown_table(train_tail, ["cell", "phase", "epoch_or_episode", "loss", "val_accuracy", "episode_return", "success", "collision"], formats))
@@ -653,18 +856,8 @@ def write_summary_markdown(
     lines.extend(
         markdown_table(
             residual_vs_pure,
-            [
-                "cell",
-                "stage",
-                "scenario_group",
-                "pure_success",
-                "residual_success",
-                "delta_success",
-                "pure_collision",
-                "residual_collision",
-                "delta_collision",
-                "delta_min_clearance",
-            ],
+            ["cell", "stage", "scenario_group", "pure_success", "residual_success",
+             "delta_success", "pure_collision", "residual_collision", "delta_collision", "delta_min_clearance"],
             formats,
         )
     )
@@ -672,46 +865,65 @@ def write_summary_markdown(
     lines.extend(
         markdown_table(
             cfc_vs_ltc,
-            [
-                "stage",
-                "variant",
-                "scenario_group",
-                "cfc_success",
-                "ltc_success",
-                "delta_success_cfc_minus_ltc",
-                "cfc_collision",
-                "ltc_collision",
-                "delta_collision_cfc_minus_ltc",
-                "delta_min_clearance_cfc_minus_ltc",
-            ],
+            ["stage", "variant", "scenario_group", "cfc_success", "ltc_success",
+             "delta_success_cfc_minus_ltc", "cfc_collision", "ltc_collision",
+             "delta_collision_cfc_minus_ltc", "delta_min_clearance_cfc_minus_ltc"],
             formats,
         )
     )
-    lines.extend(["", "## Hard map ortalaması", ""])
+    # Hard map table with CI
+    lines.extend(["", "## Hard map ortalaması (95% CI dahil)", ""])
     lines.extend(
         markdown_table(
             hard_rows,
-            ["controller", "cell", "stage", "variant", "n", "success_rate", "collision_rate", "mean_steps", "mean_min_clearance", "mean_near_misses"],
+            ["controller", "cell", "stage", "variant", "n",
+             "success_rate", "success_ci_lower", "success_ci_upper",
+             "collision_rate", "mean_steps", "mean_min_clearance",
+             "mean_near_misses", "mean_action_disagreements", "mean_beneficial_disagreements"],
             formats,
         )
     )
-    lines.extend(["", "## Default map ortalaması", ""])
+    # Default map table with CI
+    lines.extend(["", "## Default map ortalaması (95% CI dahil)", ""])
     lines.extend(
         markdown_table(
             default_rows,
-            ["controller", "cell", "stage", "variant", "n", "success_rate", "collision_rate", "mean_steps", "mean_min_clearance", "mean_near_misses"],
+            ["controller", "cell", "stage", "variant", "n",
+             "success_rate", "success_ci_lower", "success_ci_upper",
+             "collision_rate", "mean_steps", "mean_min_clearance",
+             "mean_near_misses", "mean_action_disagreements", "mean_beneficial_disagreements"],
             formats,
         )
     )
+    # Statistical comparisons
+    if statistical_comparisons:
+        lines.extend(["", "## İstatistiksel karşılaştırmalar (Mann-Whitney U, BH düzeltmeli)", ""])
+        lines.extend(
+            markdown_table(
+                statistical_comparisons,
+                ["scenario_group", "comparison", "controller_a", "controller_b",
+                 "n_a", "n_b", "small_n_warning", "mean_a", "mean_b", "delta",
+                 "mann_whitney_U", "p_value_raw", "p_value_bh_corrected",
+                 "cohens_d", "significant_005"],
+                formats,
+            )
+        )
     lines.extend(
         [
             "",
             "## Bilimsel okuma",
             "",
-            "- `pure` varyantında karar tamamen NCP logits ile verilir; bu saf kapasite ve kararlılık testidir.",
-            "- `residual` varyantında sabit uzman politikanın üstüne NCP düzeltmesi eklenir; bu daha güvenli dağıtım senaryosunu temsil eder.",
+            "- `pure` varyantında karar tamamen NCP/MLP logits ile verilir; bu saf kapasite ve kararlılık testidir.",
+            "- `residual` varyantında sabit uzman politikanın üstüne NCP/MLP düzeltmesi eklenir; bu daha güvenli dağıtım senaryosunu temsil eder.",
+            "- `random_residual` eğitilmemiş (rastgele ağırlıklı) NCP ile residual yapıyı test eder; öğrenilmiş bilginin etkisini izole eder.",
+            "- `mlp` baseline, recurrent olmayan feedforward ağdır; NCP mimarisinin (sürekli zaman dinamikleri) etkisini ayırt etmeyi sağlar.",
             "- CfC/LTC kıyası aynı veri, seed ailesi ve harita setinde yapılır; farklar mimari ve kısa fine-tune dinamiğinden gelir.",
-            "- Bu çalışma hâlâ küçük ölçekli simülasyondur; sonuçlar hipotez taraması için kullanılır, robotik sistem iddiası için daha büyük seed sayısı ve fiziksel validasyon gerekir.",
+            f"- {n_seeds} bağımsız seed ile eğitim yapılmış, sonuçlar tüm seed'ler üzerinden toplanmıştır.",
+            "- Wilson score interval (95% CI) küçük örneklem için uygun binomial güven aralığı sağlar.",
+            "- Benjamini-Hochberg FDR düzeltmesi çoklu karşılaştırma hatasını kontrol eder.",
+            "- `small_n_warning=yes`: Grup başına n<8 olduğunda Mann-Whitney U normal yaklaşımı güvenilirliğini yitirir; bu satırlardaki p-değerleri dikkatli yorumlanmalıdır.",
+            "- Aksiyon uyuşmazlığı (action disagreement): NCP/MLP'nin sabit politikadan farklı karar verdiği adım sayısı.",
+            "- Yararlı uyuşmazlık (beneficial disagreement): Farklı kararın daha iyi clearance veya ilerleme sağladığı adım sayısı.",
         ]
     )
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -721,14 +933,18 @@ def plot_ablation(grouped_rows: list[dict], out_path: Path) -> None:
     hard = [r for r in grouped_rows if r["scenario_group"] == "hard"]
     order = [
         "fixed_policy",
+        "mlp_imitation_residual",
+        "mlp_rl_finetune_residual",
         "cfc_imitation_pure",
         "cfc_imitation_residual",
         "cfc_rl_finetune_pure",
         "cfc_rl_finetune_residual",
+        "cfc_random_residual",
         "ltc_imitation_pure",
         "ltc_imitation_residual",
         "ltc_rl_finetune_pure",
         "ltc_rl_finetune_residual",
+        "ltc_random_residual",
     ]
     rows = [next((r for r in hard if r["controller"] == name), None) for name in order]
     rows = [r for r in rows if r is not None]
@@ -736,24 +952,111 @@ def plot_ablation(grouped_rows: list[dict], out_path: Path) -> None:
     success = [r["success_rate"] for r in rows]
     collision = [r["collision_rate"] for r in rows]
     clearance = [r["mean_min_clearance"] for r in rows]
+
+    # Error bars from Wilson CI
+    s_err_lo = [r["success_rate"] - r.get("success_ci_lower", r["success_rate"]) for r in rows]
+    s_err_hi = [r.get("success_ci_upper", r["success_rate"]) - r["success_rate"] for r in rows]
+    c_err_lo = [r["collision_rate"] - r.get("collision_ci_lower", r["collision_rate"]) for r in rows]
+    c_err_hi = [r.get("collision_ci_upper", r["collision_rate"]) - r["collision_rate"] for r in rows]
+    cl_err = [r.get("std_min_clearance", 0.0) for r in rows]
+
+    # Color coding
+    colors = []
+    for r in rows:
+        cell = r.get("cell", "")
+        variant = r.get("variant", "")
+        if cell == "fixed":
+            colors.append("#e8a838")
+        elif cell == "mlp":
+            colors.append("#4a90d9")
+        elif variant == "residual" and r.get("stage") == "random":
+            colors.append("#999999")
+        elif cell == "cfc":
+            colors.append("#16837a")
+        elif cell == "ltc":
+            colors.append("#2ca02c")
+        else:
+            colors.append("#555555")
+
     x = np.arange(len(rows))
-    fig, axes = plt.subplots(3, 1, figsize=(12, 9), constrained_layout=True)
-    axes[0].bar(x, success, color="#16837a")
-    axes[0].set_ylim(0, 1)
-    axes[0].set_ylabel("success")
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10), constrained_layout=True)
+    axes[0].bar(x, success, color=colors, yerr=[s_err_lo, s_err_hi], capsize=3, ecolor="#333")
+    axes[0].set_ylim(0, 1.05)
+    axes[0].set_ylabel("success rate (95% CI)")
     axes[0].grid(axis="y", alpha=0.25)
-    axes[1].bar(x, collision, color="#b64252")
-    axes[1].set_ylim(0, 1)
-    axes[1].set_ylabel("collision")
+    axes[1].bar(x, collision, color=colors, yerr=[c_err_lo, c_err_hi], capsize=3, ecolor="#333")
+    axes[1].set_ylim(0, 1.05)
+    axes[1].set_ylabel("collision rate (95% CI)")
     axes[1].grid(axis="y", alpha=0.25)
-    axes[2].bar(x, clearance, color="#555555")
-    axes[2].set_ylabel("min clearance")
+    axes[2].bar(x, clearance, color=colors, yerr=cl_err, capsize=3, ecolor="#333")
+    axes[2].set_ylabel("min clearance (±1 std)")
     axes[2].grid(axis="y", alpha=0.25)
     axes[2].set_xticks(x)
-    axes[2].set_xticklabels(labels, rotation=0, fontsize=8)
-    fig.suptitle("Hard-map ablation: pure vs residual and CfC vs LTC")
+    axes[2].set_xticklabels(labels, rotation=0, fontsize=7)
+    fig.suptitle("Hard-map ablation: NCP vs MLP vs random")
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
+
+
+def build_statistical_comparisons(detail_rows: list[dict]) -> list[dict]:
+    """Pairwise Mann-Whitney U tests with effect sizes and BH correction."""
+    comparisons: list[dict] = []
+    for group in ["default", "hard"]:
+        group_rows = [r for r in detail_rows if r["scenario_group"] == group]
+        controllers = sorted({r["controller"] for r in group_rows})
+        pairs: list[tuple[str, str, str]] = []
+        for cell in ["cfc", "ltc", "mlp"]:
+            for stage in ["imitation", "rl_finetune"]:
+                pure = f"{cell}_{stage}_pure"
+                residual = f"{cell}_{stage}_residual"
+                if pure in controllers and residual in controllers:
+                    pairs.append((residual, pure, "residual_vs_pure"))
+                if residual in controllers and "fixed_policy" in controllers:
+                    pairs.append((residual, "fixed_policy", "ncp_vs_fixed"))
+            random = f"{cell}_random_residual"
+            best_res = f"{cell}_rl_finetune_residual"
+            if random in controllers and best_res in controllers:
+                pairs.append((best_res, random, "trained_vs_random"))
+        for stage in ["imitation", "rl_finetune"]:
+            for variant in ["pure", "residual"]:
+                cfc_name = f"cfc_{stage}_{variant}"
+                mlp_name = f"mlp_{stage}_{variant}"
+                if cfc_name in controllers and mlp_name in controllers:
+                    pairs.append((cfc_name, mlp_name, "ncp_vs_mlp"))
+
+        p_values: list[float] = []
+        comparison_data: list[dict] = []
+        for ctrl_a, ctrl_b, comparison_type in pairs:
+            a_vals = [r["success"] for r in group_rows if r["controller"] == ctrl_a]
+            b_vals = [r["success"] for r in group_rows if r["controller"] == ctrl_b]
+            if len(a_vals) < 3 or len(b_vals) < 3:
+                continue
+            small_n = len(a_vals) < 8 or len(b_vals) < 8
+            u, p = mann_whitney_u(a_vals, b_vals)
+            d = cohens_d(a_vals, b_vals)
+            p_values.append(p)
+            comparison_data.append({
+                "scenario_group": group,
+                "comparison": comparison_type,
+                "controller_a": ctrl_a,
+                "controller_b": ctrl_b,
+                "n_a": len(a_vals),
+                "n_b": len(b_vals),
+                "small_n_warning": "yes" if small_n else "no",
+                "mean_a": float(np.mean(a_vals)),
+                "mean_b": float(np.mean(b_vals)),
+                "delta": float(np.mean(a_vals)) - float(np.mean(b_vals)),
+                "mann_whitney_U": u,
+                "p_value_raw": p,
+                "cohens_d": d,
+            })
+        if p_values:
+            corrected = benjamini_hochberg(p_values)
+            for row, p_corr in zip(comparison_data, corrected):
+                row["p_value_bh_corrected"] = p_corr
+                row["significant_005"] = "yes" if p_corr < 0.05 else "no"
+        comparisons.extend(comparison_data)
+    return comparisons
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
@@ -761,88 +1064,110 @@ def run_pipeline(args: argparse.Namespace) -> None:
     FIGURES.mkdir(exist_ok=True)
     MODELS.mkdir(parents=True, exist_ok=True)
 
-    rng = np.random.default_rng(args.seed)
-    torch.manual_seed(args.seed)
-    base_weights = train_fixed_policy(np.random.default_rng(args.seed))
-    input_dim = base_weights.shape[0]
     train_scenarios = list(DEFAULT_SCENARIOS)
     eval_scenarios = list(DEFAULT_SCENARIOS) + list(HARD_SCENARIOS)
 
-    x_train, y_train = generate_imitation_dataset(rng, train_scenarios, args.train_sequences, args.seq_len)
-    x_val, y_val = generate_imitation_dataset(rng, train_scenarios, args.val_sequences, args.seq_len)
+    all_training_rows: list[dict] = []
+    all_eval_results: list[EpisodeResult] = []
 
-    training_rows: list[dict] = []
-    trained: dict[tuple[str, str], NCPDiscreteModel] = {}
-    for cell in ["cfc", "ltc"]:
-        model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, args.seed + (1 if cell == "cfc" else 2))
-        model = train_imitation(
-            model,
-            x_train,
-            y_train,
-            x_val,
-            y_val,
-            args.imitation_epochs,
-            args.batch_size,
-            args.imitation_lr,
-            rng,
-            cell,
-            training_rows,
-        )
-        trained[(cell, "imitation")] = copy.deepcopy(model).eval()
-        save_checkpoint(
-            MODELS / f"ncp_{cell}_imitation.pt",
-            trained[(cell, "imitation")],
-            {"cell": cell, "stage": "imitation", "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
-        )
+    for seed_idx in range(args.n_seeds):
+        current_seed = args.seed + seed_idx * 1000
+        print(f"\n=== Seed {seed_idx + 1}/{args.n_seeds} (seed={current_seed}) ===")
+        rng = np.random.default_rng(current_seed)
+        torch.manual_seed(current_seed)
 
-        rl_model = copy.deepcopy(model)
-        rl_model = fine_tune_rl(
-            rl_model,
-            rng,
-            train_scenarios,
-            args.rl_episodes,
-            args.rl_max_steps,
-            args.rl_lr,
-            args.entropy_coef,
-            cell,
-            training_rows,
-        )
-        trained[(cell, "rl_finetune")] = rl_model.eval()
-        save_checkpoint(
-            MODELS / f"ncp_{cell}_rl_finetune.pt",
-            trained[(cell, "rl_finetune")],
-            {"cell": cell, "stage": "rl_finetune", "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
-        )
+        base_weights = train_fixed_policy(np.random.default_rng(current_seed))
+        input_dim = base_weights.shape[0]
 
-    eval_results = evaluate_models(
-        trained,
-        base_weights,
-        eval_scenarios,
-        args.eval_episodes,
-        args.eval_max_steps,
-        args.residual_scale,
-        args.seed,
-    )
-    detail_rows, grouped_rows = build_group_tables(eval_results)
+        x_train, y_train = generate_imitation_dataset(rng, train_scenarios, args.train_sequences, args.seq_len)
+        x_val, y_val = generate_imitation_dataset(rng, train_scenarios, args.val_sequences, args.seq_len)
+
+        training_rows: list[dict] = []
+        trained: dict[tuple[str, str], nn.Module] = {}
+
+        for cell in ["cfc", "ltc", "mlp"]:
+            cell_seed = current_seed + {"cfc": 1, "ltc": 2, "mlp": 3}[cell]
+            torch.manual_seed(cell_seed)
+            if cell == "mlp":
+                model: nn.Module = MLPDiscreteModel(input_dim, args.hidden_dim, cell_seed)
+            else:
+                model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, cell_seed)
+            model = train_imitation(
+                model, x_train, y_train, x_val, y_val,
+                args.imitation_epochs, args.batch_size, args.imitation_lr,
+                rng, cell, training_rows,
+            )
+            trained[(cell, "imitation")] = copy.deepcopy(model)
+            trained[(cell, "imitation")].train(False)
+            save_checkpoint(
+                MODELS / f"ncp_{cell}_imitation_seed{seed_idx}.pt",
+                trained[(cell, "imitation")],
+                {"cell": cell, "stage": "imitation", "seed_idx": seed_idx,
+                 "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
+            )
+
+            rl_model = copy.deepcopy(model)
+            rl_model = fine_tune_rl(
+                rl_model, rng, train_scenarios,
+                args.rl_episodes, args.rl_max_steps, args.rl_lr,
+                args.entropy_coef, cell, training_rows,
+            )
+            trained[(cell, "rl_finetune")] = rl_model
+            trained[(cell, "rl_finetune")].train(False)
+            save_checkpoint(
+                MODELS / f"ncp_{cell}_rl_finetune_seed{seed_idx}.pt",
+                trained[(cell, "rl_finetune")],
+                {"cell": cell, "stage": "rl_finetune", "seed_idx": seed_idx,
+                 "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
+            )
+
+        # Random residual controls (untrained NCP models)
+        for cell in ["cfc", "ltc"]:
+            random_seed = current_seed + 999
+            torch.manual_seed(random_seed)
+            random_model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, random_seed)
+            random_model.train(False)
+            trained[(cell, "random")] = random_model
+
+        for row in training_rows:
+            row["seed_idx"] = seed_idx
+        all_training_rows.extend(training_rows)
+
+        seed_results = evaluate_models(
+            trained, base_weights, eval_scenarios,
+            args.eval_episodes, args.eval_max_steps,
+            args.residual_scale, current_seed,
+        )
+        all_eval_results.extend(seed_results)
+        print(f"  Seed {seed_idx}: {len(seed_results)} episodes completed.")
+
+    # Aggregate all results across seeds
+    detail_rows, grouped_rows = build_group_tables(all_eval_results)
     residual_vs_pure, cfc_vs_ltc = build_pairwise_tables(grouped_rows)
-    scenario_summary = aggregate(eval_results)
+    statistical_comparisons = build_statistical_comparisons(detail_rows)
+    scenario_summary = aggregate(all_eval_results)
     scenario_summary = [{**row, **controller_metadata(row["controller"])} for row in scenario_summary]
 
-    write_rows(RESULTS / "ncp_training_log.csv", training_rows)
+    write_rows(RESULTS / "ncp_training_log.csv", all_training_rows)
     write_rows(RESULTS / "ncp_ablation_episode_results.csv", detail_rows)
     write_rows(RESULTS / "ncp_ablation_group_summary.csv", grouped_rows)
     write_rows(RESULTS / "ncp_residual_vs_pure_summary.csv", residual_vs_pure)
     write_rows(RESULTS / "ncp_cfc_vs_ltc_summary.csv", cfc_vs_ltc)
     write_rows(RESULTS / "ncp_ablation_scenario_summary.csv", scenario_summary)
-    write_summary_markdown(RESULTS / "ncp_ablation_summary.md", grouped_rows, residual_vs_pure, cfc_vs_ltc, training_rows, eval_scenarios, args)
+    if statistical_comparisons:
+        write_rows(RESULTS / "ncp_statistical_comparisons.csv", statistical_comparisons)
+    write_summary_markdown(RESULTS / "ncp_ablation_summary.md", grouped_rows, residual_vs_pure,
+                           cfc_vs_ltc, statistical_comparisons, all_training_rows, eval_scenarios, args)
     plot_ablation(grouped_rows, FIGURES / "ncp_ablation_success_collision.png")
 
-    print(f"Wrote {RESULTS / 'ncp_training_log.csv'}")
+    print(f"\nWrote {RESULTS / 'ncp_training_log.csv'}")
     print(f"Wrote {RESULTS / 'ncp_ablation_episode_results.csv'}")
     print(f"Wrote {RESULTS / 'ncp_ablation_group_summary.csv'}")
     print(f"Wrote {RESULTS / 'ncp_residual_vs_pure_summary.csv'}")
     print(f"Wrote {RESULTS / 'ncp_cfc_vs_ltc_summary.csv'}")
     print(f"Wrote {RESULTS / 'ncp_ablation_scenario_summary.csv'}")
+    if statistical_comparisons:
+        print(f"Wrote {RESULTS / 'ncp_statistical_comparisons.csv'}")
     print(f"Wrote {RESULTS / 'ncp_ablation_summary.md'}")
     print(f"Wrote {FIGURES / 'ncp_ablation_success_collision.png'}")
 
@@ -863,8 +1188,10 @@ def main() -> None:
     parser.add_argument("--hidden-dim", type=int, default=32)
     parser.add_argument("--sparsity", type=float, default=0.50)
     parser.add_argument("--residual-scale", type=float, default=0.35)
-    parser.add_argument("--eval-episodes", type=int, default=3)
+    parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--eval-max-steps", type=int, default=MAX_STEPS)
+    parser.add_argument("--n-seeds", type=int, default=5,
+                        help="Number of independent training seeds for variance estimation.")
     args = parser.parse_args()
     run_pipeline(args)
 
