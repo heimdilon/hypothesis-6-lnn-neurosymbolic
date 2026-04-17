@@ -17,7 +17,14 @@ Bu proje, yüksek lisans dersi kapsamında seçilen mobil robot navigasyonu lite
 - MIT'nin resmi `ncps` kütüphanesi kullanılarak `CfC` ve `LTC` tabanlı Neural Circuit Policy modelleri denendi.
 - Saf NCP, residual NCP, CfC-LTC karşılaştırması ve kısa imitation/RL ablation deneyleri yapıldı.
 
-Ana bulgu: **Saf NCP kontrolcü bu küçük deney düzeninde kararsız kaldı; ancak sabit güvenli politika üzerine residual NCP düzeltmesi eklemek, özellikle CfC + RL fine-tune konfigürasyonunda zorlu haritalarda başarıyı artırdı ve çarpışmayı azalttı.** Bu sonuç, hipotezin "sürekli öğrenme potansiyeli vardır ama güvenlik süpervizörüyle sınırlandırılmalıdır" kısmını destekleyen ön kanıt sağlar.
+Ana bulgu (10 bağımsız seed, Wilson 95% CI, Mann-Whitney U + Benjamini-Hochberg FDR):
+
+- **Saf NCP/MLP politikaları bu eğitim bütçesinde başarısız kaldı** (başarı ≈ 0, çarpışma 0.85–1.00). Residual yapı başarıyı büyük farkla artırdı (success üzerinden Cohen's d ≈ 1.0–5.8); çarpışma da simetrik şekilde 0.85–1.00 seviyesinden 0.00–0.65 bandına düştü.
+- **Residual NCP, sabit baseline'a göre zorlu haritalarda ölçülebilir avantaj sağlamadı** (hard haritada tüm karşılaştırmalarda p_bh = 1.00, Δ ≤ ±0.03). Sadece eğitim dağılımına yakın default haritalarda zayıf sinyal var (cfc/mlp imitation residual p_bh ≈ 0.013–0.048, d ≈ 0.2), bu da hard haritada kayboluyor.
+- **Eğitilmiş residual ≈ rastgele ağırlıklı residual** (default p_bh ≥ 0.55, hard p_bh = 1.00). Yani residual yapının değeri öğrenilmiş NCP ağırlığından değil, altındaki fixed baseline'dan geliyor.
+- **CfC ≈ LTC ≈ MLP** (p_bh ≥ 0.083; tüm mimari karşılaştırmaları FDR sonrası anlamsız). Sürekli zamanlı NCP mimarisinin bu görev setinde feedforward MLP'ye karşı istatistiksel üstünlüğü gözlenmedi.
+
+Bu sonuç, H6'nın **güvenlik süpervizörü gerekir** kısmını (saf NCP başarısız, residual sabit baseline + güvenli) güçlü destekler; **LNN adaptasyon sağlar** kısmını ise bu bütçe ve görev setinde desteklemez.
 
 ## Seçilen Makaleler
 
@@ -48,7 +55,7 @@ Bu proje H6'yı tam ölçekli bir robotik sistem olarak kanıtlamaz. Ama hipotez
 | --- | --- | --- |
 | LNN | Liquid Neural Network | Girdiye ve zamana bağlı dinamikleri olan sinir ağı ailesidir. Bu çalışmada LNN fikri, değişen haritalara uyum sağlayabilecek öğrenen kontrolcü adayı olarak ele alındı. |
 | NCP | Neural Circuit Policy | MIT'nin `ncps` kütüphanesinde yer alan, biyolojik sinir devrelerinden esinlenen seyrek bağlantılı politika mimarisidir. Robotun hangi yöne hareket edeceğine karar veren öğrenen kontrolcü olarak kullanıldı. |
-| CfC | Closed-form Continuous-time | Sürekli zamanlı nöral dinamikleri kapalı form yaklaşımla hesaplayan NCP katmanıdır. Bu çalışmada LTC'ye göre daha kararlı sonuç verdi. |
+| CfC | Closed-form Continuous-time | Sürekli zamanlı nöral dinamikleri kapalı form yaklaşımla hesaplayan NCP katmanıdır. Erken 1-seed smoke koşumlarında LTC'ye göre daha kararlı gözükmüştü; 10-seed kontrollü karşılaştırmada ise CfC ≈ LTC olarak bulundu (bkz. Temel Sonuçlar). |
 | LTC | Liquid Time-Constant | Öğrenilebilir zaman sabitleri kullanan liquid neural network katmanıdır. Dinamik sistem gibi davranması beklenir, fakat parametre hassasiyeti daha belirgin olabilir. |
 | RL | Reinforcement Learning | Pekiştirmeli öğrenmedir. Robot doğru ilerleme ve hedefe ulaşma için ödül, çarpışma ve riskli davranış için ceza alır. |
 | DRL | Deep Reinforcement Learning | Pekiştirmeli öğrenmenin derin sinir ağlarıyla yapılan halidir. Hipotezde sabit ağırlıklı DRL politikası, dağıtım sonrası adaptasyonu sınırlı bir referans fikir olarak kullanıldı. |
@@ -70,6 +77,11 @@ Bu projede ablation üç soruya cevap vermek için kullanıldı:
 - **Pure vs residual:** NCP tek başına mı daha iyi çalışıyor, yoksa sabit güvenli politika üzerine düzeltici olarak mı daha kararlı?
 - **CfC vs LTC:** MIT `ncps` içindeki iki liquid/NCP katmanı aynı görevde farklı davranıyor mu?
 - **Imitation vs RL fine-tune:** Uzman davranışını taklit etmek yeterli mi, yoksa kısa pekiştirmeli öğrenme sonrası performans değişiyor mu?
+
+Deney setine ek olarak iki kontrol grubu daha eklendi:
+
+- **MLP baseline:** Recurrent olmayan feedforward ağ. NCP mimarisinin (sürekli zaman dinamikleri) katkısını izole eder.
+- **Random residual:** Eğitilmemiş (rastgele ağırlıklı) NCP ile residual yapı. Öğrenilmiş bilginin etkisini fixed baseline'dan izole eder.
 
 Bu yüzden ablation burada yalnızca teknik bir tablo değildir; doğrudan Hipotez 6'nın güvenlik kısmını test eden deney tasarımıdır. Saf NCP'nin başarısız olması ve residual NCP'nin daha iyi davranması, öğrenen politikanın güvenlik süpervizörüyle sınırlandırılması gerektiği fikrini güçlendirmiştir.
 
@@ -123,23 +135,46 @@ Etkileşimli arayüz de eklendi. Bu arayüzde kullanıcı haritanın adını yaz
 
 ## Temel Sonuçlar
 
-Aşağıdaki tablo `results/ncp_ablation_group_summary.csv` dosyasından özetlenmiştir. Değerler küçük ölçekli deneylerin başarı ve çarpışma oranlarını gösterir.
+Aşağıdaki tablo `results/ncp_ablation_group_summary.csv` dosyasından özetlenmiştir. Başarı sütunları için Wilson 95% güven aralığı verilmiştir; çarpışma oranları nokta tahmindir. Tüm değerler 10 bağımsız seed üzerinden toplanmıştır (`n_default = 320`, `n_hard = 400`).
 
-| Denetleyici | Varyant | Default başarı | Default çarpışma | Zorlu harita başarı | Zorlu harita çarpışma |
+| Denetleyici | Varyant | Default başarı (95% CI) | Default çarpışma | Zorlu harita başarı (95% CI) | Zorlu harita çarpışma |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Sabit politika | Baseline | 0.750 | 0.000 | 0.500 | 0.500 |
-| CfC NCP | Pure + RL | 0.000 | 1.000 | 0.000 | 1.000 |
-| LTC NCP | Pure + RL | 0.000 | 1.000 | 0.000 | 1.000 |
-| CfC NCP | Residual + RL | 1.000 | 0.000 | 0.600 | 0.400 |
-| LTC NCP | Residual + RL | 0.875 | 0.000 | 0.300 | 0.700 |
+| Sabit politika | Baseline | 0.878 (0.838–0.910) | 0.003 | 0.370 (0.324–0.418) | 0.623 |
+| CfC NCP | Pure (imitation) | 0.000 (0.000–0.012) | 0.859 | 0.000 (0.000–0.010) | 0.940 |
+| CfC NCP | Pure (RL fine-tune) | 0.000 (0.000–0.012) | 0.850 | 0.000 (0.000–0.010) | 0.943 |
+| CfC NCP | Residual (imitation) | 0.934 (0.902–0.957) | 0.009 | 0.370 (0.324–0.418) | 0.630 |
+| CfC NCP | Residual (RL fine-tune) | 0.919 (0.884–0.944) | 0.000 | 0.375 (0.329–0.423) | 0.618 |
+| CfC NCP | Residual (random weights) | 0.916 (0.880–0.941) | 0.006 | 0.365 (0.319–0.413) | 0.627 |
+| LTC NCP | Pure (imitation) | 0.000 (0.000–0.012) | 0.991 | 0.000 (0.000–0.010) | 0.993 |
+| LTC NCP | Residual (RL fine-tune) | 0.909 (0.873–0.936) | 0.016 | 0.355 (0.310–0.403) | 0.640 |
+| LTC NCP | Residual (random weights) | 0.884 (0.845–0.915) | 0.000 | 0.362 (0.317–0.411) | 0.637 |
+| MLP baseline | Pure (imitation) | 0.000 (0.000–0.012) | 1.000 | 0.000 (0.000–0.010) | 1.000 |
+| MLP baseline | Residual (imitation) | 0.944 (0.913–0.964) | 0.003 | 0.347 (0.302–0.395) | 0.650 |
+| MLP baseline | Residual (RL fine-tune) | 0.912 (0.876–0.939) | 0.009 | 0.338 (0.293–0.385) | 0.652 |
+
+Temel istatistiksel karşılaştırmalar (Mann-Whitney U, Benjamini-Hochberg FDR düzeltmeli; CSV'deki sütun adı `p_value_bh_corrected`, aşağıda kısaltılmış olarak `p_bh`):
+
+| Karşılaştırma | Harita grubu | p_bh aralığı | Cohen's d | Yorum |
+| --- | --- | ---: | ---: | --- |
+| residual vs pure (her hücre) | default | < 0.0001 | 4.16–5.78 | **Çok büyük**: pure NCP/MLP bu düzeyde öğrenemiyor |
+| residual vs pure (her hücre) | hard | < 0.0001 | 1.01–1.09 | **Büyük**: residual yapı pure'den açık ara üstün |
+| NCP residual vs fixed | default | 0.048–0.79 | 0.06–0.19 | Sadece `cfc_imitation` marjinal anlamlı (d küçük) |
+| MLP residual vs fixed | default | 0.013–0.34 | 0.11–0.23 | `mlp_imitation` anlamlı (d küçük), `mlp_rl_finetune` anlamsız |
+| NCP/MLP residual vs fixed | hard | 1.00 (hepsi) | \|d\| ≤ 0.07 | **Anlamsız**: zorlu haritalarda üstünlük yok |
+| trained vs random residual | default | 0.55–1.00 | \|d\| ≤ 0.08 | **Anlamsız**: eğitilmiş ağırlık faydası yok |
+| trained vs random residual | hard | 1.00 (hepsi) | \|d\| ≤ 0.02 | **Anlamsız**: eğitilmiş ağırlık faydası yok |
+| NCP vs MLP (aynı varyant) | default | 0.083–1.00 | \|d\| ≤ 0.17 | **Anlamsız**: mimari farkı görünmüyor |
+| NCP vs MLP (aynı varyant) | hard | 0.997–1.00 | \|d\| ≤ 0.08 | **Anlamsız**: mimari farkı görünmüyor |
+| CfC vs LTC (aynı varyant) | default | 0.21–1.00 | \|d\| ≤ 0.14 | **Anlamsız**: iki NCP katmanı ayırt edilemiyor |
+| CfC vs LTC (aynı varyant) | hard | 1.00 (hepsi) | \|d\| ≤ 0.04 | **Anlamsız**: iki NCP katmanı ayırt edilemiyor |
 
 Bu sonuçlardan çıkan ana yorumlar:
 
-- Saf NCP politikaları bu kısa eğitim düzeninde güvenli davranış öğrenemedi.
-- Residual yapı, saf NCP'ye göre belirgin şekilde daha kararlı oldu.
-- `CfC + residual + RL fine-tune`, zorlu haritalarda sabit politikadan daha yüksek başarı ve daha düşük çarpışma oranı verdi.
-- `LTC + residual` default haritalarda makul çalışsa da zorlu haritalarda CfC kadar iyi sonuç vermedi.
-- H6'nın "öğrenen liquid politika adaptasyon sağlayabilir" kısmı sınırlı destek aldı; "güvenlik süpervizörü gerekir" kısmı ise daha güçlü desteklendi.
+- Saf NCP ve MLP politikaları bu eğitim düzeninde güvenli davranış öğrenemedi; `pure` varyantların hepsi sıfır başarıya çöktü.
+- Residual yapı pure'den çok üstün, fakat etkisi mimariyle değil fixed baseline'la açıklanıyor: **eğitilmiş residual ≈ rastgele ağırlıklı residual ≈ sabit politika** (hard harita grubunda).
+- Default haritalarda CfC/MLP imitation için marjinal kazanım görüldü (d ≈ 0.2); bu hard haritalarda kayboluyor ve "overfitting-to-easy" yorumuyla tutarlı.
+- Sürekli zamanlı NCP mimarisi (CfC/LTC) bu görev setinde feedforward MLP'ye karşı istatistiksel üstünlük sağlamadı.
+- H6'nın "öğrenen liquid politika adaptasyon sağlayabilir" kısmı bu bütçede desteklenmedi; "güvenlik süpervizörü gerekir" kısmı güçlü desteklendi (pure başarısız, residual = fixed baseline + güvenli).
 
 ## Örnek Görseller
 
@@ -214,9 +249,17 @@ Arayüzde yapılabilenler:
 
 ## Ablation Deneyini Çalıştırma
 
+Repoda yayımlanan sonuçlar aşağıdaki komutla 10 bağımsız seed üzerinde üretilmiştir. Paralel mod sayesinde çalışma süresi ~2.7× kısalır (10 seed, 10 worker ≈ 45 dk; seri eşdeğeri ≈ 2 saat):
+
 ```powershell
-C:\ProgramData\miniconda3\python.exe src\train_ncp_ablation.py --train-sequences 48 --val-sequences 12 --seq-len 24 --imitation-epochs 5 --rl-episodes 6 --eval-episodes 2 --hidden-dim 24
+C:\ProgramData\miniconda3\python.exe src\train_ncp_ablation.py `
+  --n-seeds 10 --parallel-seeds 10 `
+  --train-sequences 48 --val-sequences 12 --seq-len 24 `
+  --imitation-epochs 5 --rl-episodes 6 --eval-episodes 8 `
+  --hidden-dim 24
 ```
+
+`--parallel-seeds 1` (varsayılan) seri koşum yapar; `--parallel-seeds 0` veya negatif değer tüm mantıksal çekirdekleri kullanır. Her paralel worker `torch.set_num_threads(1)` ile sabitlenir; seri yolda PyTorch'un varsayılan intra-op paralelliği korunur.
 
 Bu komut şu dosyaları üretir:
 
@@ -226,12 +269,10 @@ Bu komut şu dosyaları üretir:
 - `results/ncp_residual_vs_pure_summary.csv`
 - `results/ncp_cfc_vs_ltc_summary.csv`
 - `results/ncp_ablation_scenario_summary.csv`
+- `results/ncp_statistical_comparisons.csv`
 - `results/ncp_ablation_summary.md`
 - `figures/ncp_ablation_success_collision.png`
-- `results/models/ncp_cfc_imitation.pt`
-- `results/models/ncp_cfc_rl_finetune.pt`
-- `results/models/ncp_ltc_imitation.pt`
-- `results/models/ncp_ltc_rl_finetune.pt`
+- `results/models/ncp_<cell>_<stage>_seed<k>.pt` (her seed için ayrı checkpoint; `.gitignore`'lı)
 
 ## Klasör Yapısı
 
@@ -266,26 +307,31 @@ hypothesis_6_lnn_neurosymbolic/
 
 Bu çalışma bir son ürün robot kontrol sistemi değildir. Daha doğru ifade ile, literatürden çıkarılan H6 hipotezini sınamak için kurulmuş bir **araştırma prototipidir**.
 
-Deneylerin bilimsel katkısı şudur: Liquid Neural Network ailesindeki resmi NCP katmanları, saf politika olarak kısa eğitimde başarısız olurken, güvenli bir sabit politikanın üstüne residual düzeltici olarak eklendiğinde daha anlamlı davranış üretmiştir. Bu, öğrenen kontrolcülerin mobil robot navigasyonunda tek başına kullanılmasından çok, kural tabanlı veya sembolik güvenlik katmanlarıyla birlikte kullanılmasının daha savunulabilir olduğunu gösterir.
+Deneylerin bilimsel katkısı iki parçalıdır:
 
-Bu sonuç özellikle H6 için önemlidir. Çünkü hipotez yalnızca "LNN daha iyi adapte olur" dememektedir; aynı zamanda "kararlılık riski vardır ve bu risk güvenlik süpervizörüyle sınırlandırılmalıdır" demektedir. Bu projedeki en güçlü bulgu da bu ikinci kısımdadır.
+1. **Güvenlik tarafı (H6'nın ikinci kısmı — desteklendi):** NCP ve MLP saf politika olarak kısa eğitimde başarısız (başarı ≈ 0, çarpışma 0.85–1.00) olurken, sabit güvenli politikanın üstüne residual düzeltici olarak eklendiklerinde çarpışma oranı düşmüş ve genel davranış sabit baseline'ın güvenlik profiline yakınsamıştır. Bu, öğrenen kontrolcülerin mobil robot navigasyonunda tek başına kullanılmasından çok, kural tabanlı veya sembolik bir güvenlik katmanıyla birlikte kullanılmasının daha savunulabilir olduğunu gösterir.
+
+2. **Adaptasyon tarafı (H6'nın birinci kısmı — bu bütçede desteklenmedi):** İstatistiksel kontrollü testte (Mann-Whitney U + Benjamini-Hochberg FDR, 10 seed) residual NCP'nin zorlu haritalarda sabit baseline'a karşı ölçülebilir üstünlüğü görülmedi (hard haritada tüm karşılaştırmalarda p_bh = 1.00, Δ ≤ ±0.03). Daha da önemlisi, **eğitilmiş residual ile rastgele ağırlıklı residual arasında istatistiksel fark yoktur** (default p_bh ≥ 0.55, hard p_bh = 1.00). Bu, residual yapının değerinin öğrenilmiş NCP ağırlıklarından değil, altındaki fixed baseline'dan geldiğini gösterir. Aynı şekilde feedforward MLP ile sürekli zamanlı NCP (CfC/LTC) arasında istatistiksel fark bulunmadı (p_bh ≥ 0.083).
+
+Bu iki bulgu bir arada H6 için şu okumayı verir: hipotezin "kararlılık riski vardır ve güvenlik süpervizörüyle sınırlandırılmalıdır" kısmı bu deney setinde güçlü destek bulmuştur. "LNN daha iyi adapte olur" kısmı ise bu bütçe ve görev setinde doğrulanmamıştır — destek için daha uzun eğitim, daha geniş dağıtım kayması senaryoları veya farklı bir mimari/kapasite dengesi gerekir.
 
 ## Sınırlılıklar
 
 - Deney 2D simülasyon düzeyindedir; fiziksel robot validasyonu yapılmamıştır.
-- Eğitim bütçesi küçüktür; daha fazla seed, daha uzun RL eğitimi ve daha fazla harita gerekir.
-- Sensör modeli basitleştirilmiştir.
+- Eğitim bütçesi küçüktür (hidden=24, 5 imitation epoch, 6 RL episode). NCP'nin dolu kapasitesi bu bütçede açığa çıkmamış olabilir; daha uzun RL eğitimi veya daha büyük ağ ile sonuçlar değişebilir.
+- Sensör modeli basitleştirilmiştir; gerçek robot gürültüsü, kör noktalar ve dinamik engeller yoktur.
 - Güvenlik süpervizörü şu anda pratik bir residual/baseline mekanizmasıdır; formel CBF, MPC veya erişilebilirlik analizi eklenmemiştir.
-- Sonuçlar hipotez taraması için uygundur; genellenebilir robotik iddiası için daha büyük deney seti gerekir.
+- Ablation istatistikleri episode düzeyinde pooled CI kullanır; seed düzeyinde ANOVA veya hierarchical model daha muhafazakar olabilir.
+- Sonuçlar hipotez taraması için uygundur; genellenebilir robotik iddiası için daha büyük deney seti ve farklı görev dağılımları gerekir.
 
 ## Sonraki Adımlar
 
-- Daha fazla random seed ile istatistiksel güven aralığı raporlamak
-- Dinamik engeller ve sensör gürültüsü eklemek
-- Residual NCP'yi formel güvenlik filtresiyle birleştirmek
-- MPC veya Control Barrier Function tabanlı süpervizör eklemek
-- Daha uzun imitation/RL eğitimi yapmak
-- Gerçek robot veya daha gerçekçi fizik simülatörüne geçmek
+- Eğitim bütçesini artırıp (daha uzun RL, daha büyük hidden) NCP avantajının ortaya çıkıp çıkmadığını test etmek
+- Daha çeşitli out-of-distribution senaryoları: dinamik engeller, kör sensör patch'i, hedef yer değiştirme
+- Residual NCP'yi formel güvenlik filtresiyle (CBF veya MPC süpervizör) birleştirmek
+- Hard haritadaki düşük başarıyı çözmek için daha sofistike baseline (ör. APF veya geometrik reaktif kontrolör)
+- Seed-düzeyi hierarchical analiz ile episode içi ve seed arası varyansı ayırmak
+- Gerçek robot veya daha gerçekçi fizik simülatörüne (PyBullet, MuJoCo) geçmek
 
 ## Sunumda Nasıl Anlatılır?
 
@@ -293,8 +339,12 @@ Bu sonuç özellikle H6 için önemlidir. Çünkü hipotez yalnızca "LNN daha i
 2. Sonra seçilen araştırma boşluğunu söyle: öğrenen navigasyon politikaları adaptif olabilir ama güvenlik ve kararlılık tarafı zayıf.
 3. Hipotez 6'yı açıkla: LNN/NCP adaptasyon sağlayabilir, fakat güvenlik süpervizörü gerektirir.
 4. Simülasyonu göster: haritalar, engeller, start-goal, GIF çıktıları ve web arayüzü.
-5. Sonuç tablosunu yorumla: saf NCP başarısız, residual NCP daha güvenli, CfC residual + RL zorlu haritalarda en iyi sonuç verdi.
+5. Sonuç tablosunu yorumla:
+   - **Güvenlik bulgusu (güçlü):** Saf NCP/MLP başarısız; residual yapı başarıyı büyük farkla artırıyor (success üzerinden d ≈ 1.0–5.8; çarpışma da 0.85–1.00 → 0.00–0.65 bandına düşüyor).
+   - **Adaptasyon bulgusu (zayıf/yok):** Residual NCP, sabit baseline'a karşı zorlu haritalarda ölçülebilir üstünlük vermedi (hard p_bh = 1.00 hepsi için). Eğitilmiş residual ≈ rastgele ağırlıklı residual (default p_bh ≥ 0.55, hard p_bh = 1.00) — öğrenilmiş ağırlığın değeri gözlenmedi.
+   - **Mimari bulgusu (nötr):** CfC ≈ LTC ≈ MLP; bu bütçede sürekli zamanlı NCP feedforward MLP'den farklı bulunmadı.
+6. Bu sonuçların H6'yı nasıl kısmen doğrulayıp kısmen sınırladığını vurgula: güvenlik kısmı destekli, adaptasyon kısmı bu bütçede değil.
 
 Tek cümlelik kapanış:
 
-> Bu proje, Liquid Neural Network tabanlı navigasyonun potansiyelini gösterirken, mobil robot güvenliği için öğrenen kontrolcünün tek başına değil, güvenli bir residual veya süpervizör yapısıyla birlikte kullanılmasının daha bilimsel ve savunulabilir olduğunu göstermektedir.
+> Bu çalışma, istatistiksel olarak kontrollü bir deneyde (10 seed, FDR düzeltmeli) Liquid Neural Network tabanlı navigasyon politikasının küçük bir simülasyon bütçesinde sabit baseline'a karşı ölçülebilir üstünlük sağlamadığını ve residual yapısının asıl değerini altındaki güvenli baseline'dan aldığını göstererek, H6'nın "öğrenen kontrolcü güvenlik süpervizörüyle sınırlandırılmalıdır" kısmını güçlü şekilde destekler.
