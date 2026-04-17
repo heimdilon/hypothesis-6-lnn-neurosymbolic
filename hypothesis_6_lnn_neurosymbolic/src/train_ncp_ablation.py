@@ -1131,11 +1131,12 @@ def _train_and_evaluate_seed(
     Returns (training_rows tagged with seed_idx, eval records as (seed_idx, EpisodeResult))
     so callers can merge independent workers' output without mixing seeds.
     """
-    # Each worker process gets its own torch thread pool. With N workers on a
-    # machine with M cores, the default M threads per worker would mean N*M
-    # OS threads fighting for the same cores. Pin to 1 so the OS scheduler
-    # distributes workers cleanly across cores.
-    torch.set_num_threads(1)
+    # When multiple seed workers run concurrently, N workers * M default threads
+    # oversubscribe the cores. Pin each worker to 1 thread in that case so the OS
+    # scheduler distributes workers cleanly. Preserve PyTorch's default intra-op
+    # parallelism on the serial path (parallel_seeds == 1).
+    if getattr(args, "parallel_seeds", 1) > 1:
+        torch.set_num_threads(1)
 
     current_seed = args.seed + seed_idx * 1000
     print(f"\n=== Seed {seed_idx + 1}/{args.n_seeds} (seed={current_seed}) ===")
