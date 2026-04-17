@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import copy
 import csv
 import math
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -1116,6 +1118,92 @@ def build_statistical_comparisons(detail_rows: list[dict]) -> list[dict]:
     return comparisons
 
 
+def _train_and_evaluate_seed(
+    seed_idx: int,
+    args: argparse.Namespace,
+    base_weights: np.ndarray,
+    input_dim: int,
+    train_scenarios: list,
+    eval_scenarios: list,
+) -> tuple[list[dict], list[tuple[int, EpisodeResult]]]:
+    """Train + evaluate one seed. Safe for ProcessPoolExecutor workers.
+
+    Returns (training_rows tagged with seed_idx, eval records as (seed_idx, EpisodeResult))
+    so callers can merge independent workers' output without mixing seeds.
+    """
+    # Each worker process gets its own torch thread pool. With N workers on a
+    # machine with M cores, the default M threads per worker would mean N*M
+    # OS threads fighting for the same cores. Pin to 1 so the OS scheduler
+    # distributes workers cleanly across cores.
+    torch.set_num_threads(1)
+
+    current_seed = args.seed + seed_idx * 1000
+    print(f"\n=== Seed {seed_idx + 1}/{args.n_seeds} (seed={current_seed}) ===")
+    rng = np.random.default_rng(current_seed)
+    torch.manual_seed(current_seed)
+
+    x_train, y_train = generate_imitation_dataset(rng, train_scenarios, args.train_sequences, args.seq_len)
+    x_val, y_val = generate_imitation_dataset(rng, train_scenarios, args.val_sequences, args.seq_len)
+
+    training_rows: list[dict] = []
+    trained: dict[tuple[str, str], nn.Module] = {}
+
+    for cell in ["cfc", "ltc", "mlp"]:
+        cell_seed = current_seed + {"cfc": 1, "ltc": 2, "mlp": 3}[cell]
+        torch.manual_seed(cell_seed)
+        if cell == "mlp":
+            model: nn.Module = MLPDiscreteModel(input_dim, args.hidden_dim, cell_seed)
+        else:
+            model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, cell_seed)
+        model = train_imitation(
+            model, x_train, y_train, x_val, y_val,
+            args.imitation_epochs, args.batch_size, args.imitation_lr,
+            rng, cell, training_rows,
+        )
+        trained[(cell, "imitation")] = copy.deepcopy(model)
+        trained[(cell, "imitation")].train(False)
+        save_checkpoint(
+            MODELS / f"ncp_{cell}_imitation_seed{seed_idx}.pt",
+            trained[(cell, "imitation")],
+            {"cell": cell, "stage": "imitation", "seed_idx": seed_idx,
+             "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
+        )
+
+        rl_model = copy.deepcopy(model)
+        rl_model = fine_tune_rl(
+            rl_model, rng, train_scenarios,
+            args.rl_episodes, args.rl_max_steps, args.rl_lr,
+            args.entropy_coef, cell, training_rows,
+        )
+        trained[(cell, "rl_finetune")] = rl_model
+        trained[(cell, "rl_finetune")].train(False)
+        save_checkpoint(
+            MODELS / f"ncp_{cell}_rl_finetune_seed{seed_idx}.pt",
+            trained[(cell, "rl_finetune")],
+            {"cell": cell, "stage": "rl_finetune", "seed_idx": seed_idx,
+             "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
+        )
+
+    for cell in ["cfc", "ltc"]:
+        random_seed = current_seed + 999
+        torch.manual_seed(random_seed)
+        random_model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, random_seed)
+        random_model.train(False)
+        trained[(cell, "random")] = random_model
+
+    for row in training_rows:
+        row["seed_idx"] = seed_idx
+
+    seed_results = evaluate_models(
+        trained, base_weights, eval_scenarios,
+        args.eval_episodes, args.eval_max_steps,
+        args.residual_scale, current_seed,
+    )
+    eval_records = [(seed_idx, r) for r in seed_results]
+    print(f"  Seed {seed_idx}: {len(seed_results)} episodes completed.")
+    return training_rows, eval_records
+
+
 def run_pipeline(args: argparse.Namespace) -> None:
     RESULTS.mkdir(exist_ok=True)
     FIGURES.mkdir(exist_ok=True)
@@ -1134,73 +1222,39 @@ def run_pipeline(args: argparse.Namespace) -> None:
     base_weights = train_fixed_policy(np.random.default_rng(args.seed))
     input_dim = base_weights.shape[0]
 
-    for seed_idx in range(args.n_seeds):
-        current_seed = args.seed + seed_idx * 1000
-        print(f"\n=== Seed {seed_idx + 1}/{args.n_seeds} (seed={current_seed}) ===")
-        rng = np.random.default_rng(current_seed)
-        torch.manual_seed(current_seed)
+    parallel_seeds = max(1, int(getattr(args, "parallel_seeds", 1)))
+    effective_parallel = min(parallel_seeds, args.n_seeds)
 
-        x_train, y_train = generate_imitation_dataset(rng, train_scenarios, args.train_sequences, args.seq_len)
-        x_val, y_val = generate_imitation_dataset(rng, train_scenarios, args.val_sequences, args.seq_len)
-
-        training_rows: list[dict] = []
-        trained: dict[tuple[str, str], nn.Module] = {}
-
-        for cell in ["cfc", "ltc", "mlp"]:
-            cell_seed = current_seed + {"cfc": 1, "ltc": 2, "mlp": 3}[cell]
-            torch.manual_seed(cell_seed)
-            if cell == "mlp":
-                model: nn.Module = MLPDiscreteModel(input_dim, args.hidden_dim, cell_seed)
-            else:
-                model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, cell_seed)
-            model = train_imitation(
-                model, x_train, y_train, x_val, y_val,
-                args.imitation_epochs, args.batch_size, args.imitation_lr,
-                rng, cell, training_rows,
+    if effective_parallel <= 1:
+        for seed_idx in range(args.n_seeds):
+            training_rows, eval_records = _train_and_evaluate_seed(
+                seed_idx, args, base_weights, input_dim, train_scenarios, eval_scenarios,
             )
-            trained[(cell, "imitation")] = copy.deepcopy(model)
-            trained[(cell, "imitation")].train(False)
-            save_checkpoint(
-                MODELS / f"ncp_{cell}_imitation_seed{seed_idx}.pt",
-                trained[(cell, "imitation")],
-                {"cell": cell, "stage": "imitation", "seed_idx": seed_idx,
-                 "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
-            )
-
-            rl_model = copy.deepcopy(model)
-            rl_model = fine_tune_rl(
-                rl_model, rng, train_scenarios,
-                args.rl_episodes, args.rl_max_steps, args.rl_lr,
-                args.entropy_coef, cell, training_rows,
-            )
-            trained[(cell, "rl_finetune")] = rl_model
-            trained[(cell, "rl_finetune")].train(False)
-            save_checkpoint(
-                MODELS / f"ncp_{cell}_rl_finetune_seed{seed_idx}.pt",
-                trained[(cell, "rl_finetune")],
-                {"cell": cell, "stage": "rl_finetune", "seed_idx": seed_idx,
-                 "input_dim": input_dim, "hidden_dim": args.hidden_dim, "sparsity": args.sparsity},
-            )
-
-        # Random residual controls (untrained NCP models)
-        for cell in ["cfc", "ltc"]:
-            random_seed = current_seed + 999
-            torch.manual_seed(random_seed)
-            random_model = NCPDiscreteModel(input_dim, cell, args.hidden_dim, args.sparsity, random_seed)
-            random_model.train(False)
-            trained[(cell, "random")] = random_model
-
-        for row in training_rows:
-            row["seed_idx"] = seed_idx
-        all_training_rows.extend(training_rows)
-
-        seed_results = evaluate_models(
-            trained, base_weights, eval_scenarios,
-            args.eval_episodes, args.eval_max_steps,
-            args.residual_scale, current_seed,
-        )
-        all_eval_records.extend((seed_idx, r) for r in seed_results)
-        print(f"  Seed {seed_idx}: {len(seed_results)} episodes completed.")
+            all_training_rows.extend(training_rows)
+            all_eval_records.extend(eval_records)
+    else:
+        print(f"[parallel] Running {args.n_seeds} seeds across {effective_parallel} workers "
+              "(each worker pinned to torch.set_num_threads(1)).")
+        per_seed_rows: dict[int, list[dict]] = {}
+        per_seed_records: dict[int, list[tuple[int, EpisodeResult]]] = {}
+        with concurrent.futures.ProcessPoolExecutor(max_workers=effective_parallel) as pool:
+            futures = {
+                pool.submit(
+                    _train_and_evaluate_seed,
+                    seed_idx, args, base_weights, input_dim, train_scenarios, eval_scenarios,
+                ): seed_idx
+                for seed_idx in range(args.n_seeds)
+            }
+            for future in concurrent.futures.as_completed(futures):
+                seed_idx = futures[future]
+                training_rows, eval_records = future.result()
+                per_seed_rows[seed_idx] = training_rows
+                per_seed_records[seed_idx] = eval_records
+        # Merge in seed_idx order so row ordering and downstream aggregation
+        # stay deterministic regardless of worker completion order.
+        for seed_idx in range(args.n_seeds):
+            all_training_rows.extend(per_seed_rows[seed_idx])
+            all_eval_records.extend(per_seed_records[seed_idx])
 
     # Aggregate all results across seeds
     all_eval_results = [r for _, r in all_eval_records]
@@ -1254,11 +1308,18 @@ def main() -> None:
     parser.add_argument("--eval-max-steps", type=int, default=MAX_STEPS)
     parser.add_argument("--n-seeds", type=int, default=5,
                         help="Number of independent training seeds for variance estimation.")
+    parser.add_argument("--parallel-seeds", type=int, default=1,
+                        help="Number of seeds to train in parallel via ProcessPoolExecutor. "
+                             "Default 1 (serial). Pass 0 or a negative number for 'all available' "
+                             "(os.cpu_count()). Each worker is pinned to torch.set_num_threads(1) "
+                             "to avoid CPU thread contention between workers.")
     parser.add_argument("--quick", action="store_true",
                         help="Smoke-test preset: single seed, short training, 3 eval episodes. "
                              "Overrides --n-seeds, --eval-episodes, --imitation-epochs and "
                              "--rl-episodes. Useful for CI / local iteration.")
     args = parser.parse_args()
+    if args.parallel_seeds <= 0:
+        args.parallel_seeds = os.cpu_count() or 1
     if args.quick:
         # Explicit overrides keep the preset semantic (users see what changed).
         args.n_seeds = 1

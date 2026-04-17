@@ -17,6 +17,9 @@ custom_map_server.*.log
 # Local/generated UI runs. The app recreates this folder when simulations run.
 hypothesis_6_lnn_neurosymbolic/figures/custom_maps/
 
+# Trained model checkpoints (regenerable via train_ncp_ablation.py)
+hypothesis_6_lnn_neurosymbolic/results/models/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
